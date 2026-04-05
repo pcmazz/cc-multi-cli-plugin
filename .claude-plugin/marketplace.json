@@ -1,0 +1,24 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "skill-gemini",
+  "description": "Marketplace for the skill-gemini plugin, enabling Claude Code to consult Gemini CLI for second opinions and research",
+  "owner": {
+    "name": "WalshLab",
+    "url": "https://github.com/WalshLab"
+  },
+  "plugins": [
+    {
+      "name": "skill-gemini",
+      "source": "./plugins/skill-gemini",
+      "description": "Consult Gemini CLI as a read-only thinker for second opinions, research, and alternative perspectives",
+      "version": "1.0.0",
+      "category": "development",
+      "tags": [
+        "skill",
+        "gemini",
+        "research",
+        "second-opinion"
+      ]
+    }
+  ]
+}

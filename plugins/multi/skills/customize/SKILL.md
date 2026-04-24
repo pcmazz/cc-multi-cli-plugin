@@ -66,25 +66,22 @@ Do NOT run every source for every question. The verification sources form a LADD
 
 ### The sources, in the order you'd try them
 
-1. **`<cli> --help`, `<cli> models`, `<cli> about`** — fastest. No network. Authoritative for "what does this binary accept right now."
+1. **`<cli> --help`, `<cli> models`, `<cli> about`** — fastest. No network. Free. Authoritative for "what does this binary accept right now." **Default choice for most questions.**
 
-2. **Prompt the CLI itself** (when no listing subcommand exists):
-   ```bash
-   <cli> -p "List the exact <thing> strings this CLI accepts. One per line."
-   ```
-   Only the CLI's OWN self-description. Never ask a DIFFERENT CLI (e.g., don't ask Gemini about Copilot's slash commands — Gemini is guessing, same as you would be).
+2. **Vendor docs via context7** — `resolve-library-id` → `query-docs`. Good for canonical names, deprecation context, and slash commands not surfaced by `--help`. Use this as the primary fallback when `--help` doesn't answer.
 
-3. **Vendor docs via context7** — `resolve-library-id` → `query-docs`. Good for canonical names and deprecation context.
+3. **Web search via exa** — for recent changelogs, forum posts, or obscure flags not covered by context7.
 
-4. **Web search via exa** — for recent changelogs, forum posts, or obscure flags not covered by context7.
+4. **CLI source on GitHub** — `config/models.ts` constants, etc. Use when 1–3 disagree or come up empty.
 
-5. **CLI source on GitHub** — `config/models.ts` constants, etc. Use only when 1–4 disagree or come up empty; it's slowest.
+5. **Prompt the CLI itself with `<cli> -p "..."`** — LAST RESORT only. This costs the user API credits and is slow. Don't reach for it for routine customize questions; docs and web search cover 99% of what this skill needs.
 
 ### Hard rules
 
-- **Never ask one CLI about another CLI's features.** It's just as likely to hallucinate as you are. Only use a CLI as a source for itself.
-- **Record the source you used inline in your response** so the user sees which sources you checked (and can catch if you cited an unreliable one).
-- **Claim "unverified" honestly** if a string is rare or your sources didn't surface a confident answer. Don't ship guesses as verified facts.
+- **Do not invoke `<cli> -p` as a research step** unless sources 1–4 are all empty. For a customize task (small edit, known CLI, verifiable via docs), you almost never need it.
+- **Never ask one CLI about another CLI's features.** Cross-CLI interrogation hallucinates as badly as guessing. Only use a CLI as a source for ITSELF, and even then only as a last resort.
+- **Record the source you used inline in your response** so the user sees which sources you checked.
+- **Claim "unverified" honestly** if a string is rare or sources didn't surface a confident answer. Don't ship guesses as verified facts.
 
 ### Resolving disagreements (rare — usually only one source is needed)
 

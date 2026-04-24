@@ -7,6 +7,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
+import * as codex from "./lib/adapters/codex.mjs";
 import {
     buildPersistentTaskThreadName,
     DEFAULT_CONTINUE_PROMPT,
@@ -61,6 +62,20 @@ import {
   renderStatusReport,
   renderTaskResult
 } from "./lib/render.mjs";
+
+// CLI adapter registry. Keys are CLI names as seen by the user
+// ('codex', 'gemini', 'cursor', 'copilot'). New adapters are added in later phases.
+const ADAPTERS = {
+  codex,
+};
+
+function getAdapter(name) {
+  const adapter = ADAPTERS[name];
+  if (!adapter) {
+    throw new Error(`Unknown CLI: ${name}. Available: ${Object.keys(ADAPTERS).join(', ')}`);
+  }
+  return adapter;
+}
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const REVIEW_SCHEMA = path.join(ROOT_DIR, "schemas", "review-output.schema.json");
@@ -979,7 +994,19 @@ async function handleCancel(argv) {
 }
 
 async function main() {
-  const [subcommand, ...argv] = process.argv.slice(2);
+  const rawArgv = process.argv.slice(2);
+  // Parse --cli <name> from the raw argv before splitting subcommand.
+  // Default to 'codex' for backwards compatibility.
+  const cliArgIndex = rawArgv.indexOf('--cli');
+  const cliName = cliArgIndex !== -1 && rawArgv[cliArgIndex + 1]
+    ? rawArgv[cliArgIndex + 1]
+    : 'codex';
+  // Validate early so users get a clear error.
+  const _adapter = getAdapter(cliName); // eslint-disable-line no-unused-vars
+
+  // Remove --cli <name> from argv before extracting subcommand.
+  const filteredArgv = rawArgv.filter((_, i) => i !== cliArgIndex && i !== cliArgIndex + 1);
+  const [subcommand, ...argv] = filteredArgv;
   if (!subcommand || subcommand === "help" || subcommand === "--help") {
     printUsage();
     return;

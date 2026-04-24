@@ -26,16 +26,31 @@ Tabulate which succeed. For each failure, tell the user the install command:
 
 Continue only with the CLIs that are installed. Do not block on missing ones.
 
-## Step 1.5 — Offer to install the CLI-specific plugins
+## Step 1.5 — Ensure the CLI-specific plugins are installed (idempotent)
 
-For each detected CLI, use `AskUserQuestion` to ask whether to install the matching sub-plugin. Run:
+For each detected CLI, check the current install state FIRST, then act:
 
-- Gemini detected → `claude plugin install gemini@cc-multi-cli-plugin` (adds `/gemini:research`)
-- Codex detected → `claude plugin install codex@cc-multi-cli-plugin` (adds `/codex:execute`)
-- Cursor detected → `claude plugin install cursor@cc-multi-cli-plugin` (adds `/cursor:write`, `/cursor:plan`, `/cursor:debug`)
-- Copilot detected → `claude plugin install copilot@cc-multi-cli-plugin` (adds `/copilot:research`, `/copilot:review`)
+1. **Check what's already installed** via Bash:
+   ```bash
+   claude plugin list 2>&1 | grep "@cc-multi-cli-plugin"
+   ```
+   This lists all plugins in the marketplace that are currently installed. Compare against the CLIs you detected in Step 1.
 
-Skip CLIs the user declines. Report any install failures via Bash stderr but continue. Users can install later by re-running this command or running `claude plugin install <name>@cc-multi-cli-plugin` manually.
+2. **For each detected CLI whose plugin is NOT yet installed**, and ONLY for those, use `AskUserQuestion` to ask whether to install it. Skip the prompt entirely if the plugin is already installed — don't ask the user about plugins they already have.
+
+3. **Install only the plugins the user accepted:**
+   - Gemini → `claude plugin install gemini@cc-multi-cli-plugin` (adds `/gemini:research`)
+   - Codex → `claude plugin install codex@cc-multi-cli-plugin` (adds `/codex:execute`)
+   - Cursor → `claude plugin install cursor@cc-multi-cli-plugin` (adds `/cursor:write`, `/cursor:plan`, `/cursor:debug`)
+   - Copilot → `claude plugin install copilot@cc-multi-cli-plugin` (adds `/copilot:research`, `/copilot:review`)
+
+4. **Report** at the end of Step 1.5:
+   - `✓ <cli>: already installed` for plugins that were already there (no action taken)
+   - `✓ <cli>: installed` for plugins the user accepted and just installed
+   - `⚠ <cli>: skipped` for plugins the user declined
+   - `✗ <cli>: install failed — <error>` for any failures (continue regardless)
+
+**Why this matters:** `claude plugin install` is destructive — it re-fetches and overwrites the cache even for already-installed plugins. Running installs on things already present wastes time and can disrupt active development setups. Guarding with the initial check makes `/multi:setup` safely re-runnable.
 
 ## Step 2 — Verify auth
 
@@ -50,27 +65,39 @@ If unauthenticated, give the exact login command and use `AskUserQuestion` to as
 
 ## Step 3 — Ask for API keys (Exa required, Context7 optional)
 
-Check `~/.claude/plugins/cc-multi-cli-plugin/config.json` for stored keys. If the file already has both, skip. Otherwise, ask via `AskUserQuestion` for whichever is missing.
+Check `~/.claude/plugins/cc-multi-cli-plugin/config.json` for stored keys. If both are already present, skip Step 3 entirely. Otherwise, ask only for what's missing.
 
-**Exa API key (required for web search):**
-- Exa MCP always needs a key to function.
-- Direct the user to https://dashboard.exa.ai if they don't have one.
+**Each key prompt should use EXACTLY two options** — keep it simple, no confusing multi-choice trees:
 
-**Context7 API key (optional but recommended):**
-- Context7 works without a key for basic doc lookups.
-- With a key: higher rate limits + access to `researchMode` (sandboxed agents reading source repos + live web search for deeper synthesis).
-- Direct the user to https://context7.com for a free key.
-- If the user declines, skip the env block for Context7 (it'll still work at free-tier limits).
+- Option 1: **"Skip"**
+- Option 2: **"Paste key below"** — user types/pastes the key as their response
 
-**Save to config.json with mode 0600:**
+### Exa API key (required for Exa MCP to function)
+
+Ask via `AskUserQuestion`:
+- **Header text:** "Exa API key (required). Get one free at https://dashboard.exa.ai. If you skip, the Exa MCP will be configured without a key and will fail at runtime."
+- **Option 1:** "Skip — configure Exa without a key (server will fail until key is added)"
+- **Option 2:** "Paste key below" (free-text input for the key)
+
+### Context7 API key (optional)
+
+Ask via `AskUserQuestion`:
+- **Header text:** "Context7 API key (optional). Works without a key at free-tier rate limits. With a key (free at https://context7.com): higher rate limits + access to researchMode for deeper synthesis."
+- **Option 1:** "Skip — use Context7 at free-tier limits"
+- **Option 2:** "Paste key below" (free-text input for the key)
+
+### Save
+
+After collecting both answers, write `~/.claude/plugins/cc-multi-cli-plugin/config.json` with mode 0600:
+
 ```json
 {
-  "exaApiKey": "<key>",
+  "exaApiKey": "<key-or-empty-string>",
   "context7ApiKey": "<key-or-empty-string>"
 }
 ```
 
-Create the directory with `Bash` if it doesn't exist. Never print either key back to the user after capture — just confirm "saved."
+Create the directory with `Bash` if it doesn't exist. Never echo either key back to the user after capture — just confirm "Saved." If the user skipped a key, store an empty string (Step 4's config-writing logic uses empty-string as the "skip env block" signal).
 
 ## Step 4 — Configure MCPs per CLI
 

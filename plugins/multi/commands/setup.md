@@ -14,14 +14,14 @@ Run each version probe via Bash:
 
 - `codex --version`
 - `gemini --version`
-- `cursor-agent --version` or `agent --version` (Cursor's CLI binary is `agent` — if not on PATH, check `~/.local/bin/agent` on Unix or `$LOCALAPPDATA/cursor-agent/agent.cmd` on Windows)
+- Cursor: the binary is named `agent` (not `cursor-agent`). Try `agent --version` first. On Windows the installer does NOT add it to PATH — always fall back to `$LOCALAPPDATA/cursor-agent/agent.cmd --version` (a.k.a. `C:/Users/<name>/AppData/Local/cursor-agent/agent.cmd`). Remember whichever path works; use it throughout the rest of setup.
 - `copilot --version`
 
 Tabulate which succeed. For each failure, tell the user the install command:
 
 - Codex: `npm install -g @openai/codex`
 - Gemini: `npm install -g @google/gemini-cli`
-- Cursor: `curl https://cursor.com/install -fsS | bash` (Unix) or `irm 'https://cursor.com/install?win32=true' | iex` (Windows PowerShell)
+- Cursor: `curl https://cursor.com/install -fsS | bash` (Unix) or `irm 'https://cursor.com/install?win32=true' | iex` (Windows PowerShell). After install, the binary lives at `$LOCALAPPDATA/cursor-agent/agent.cmd` on Windows and is not on PATH.
 - Copilot: `npm install -g @github/copilot`
 
 Continue only with the CLIs that are installed. Do not block on missing ones.
@@ -56,16 +56,37 @@ For each detected CLI, check the current install state FIRST, then act:
 
 For each installed CLI, check auth:
 
-- Codex: `codex whoami` or equivalent
-- Gemini: `gemini --version` should run without prompting for login
-- Cursor: `agent status`
-- Copilot: `copilot status` or rely on `GH_TOKEN`/`COPILOT_GITHUB_TOKEN` env vars
+- Codex: `codex login status` (NOT `codex whoami` — that doesn't exist)
+- Gemini: `gemini --version` should run without prompting for login (if it prompts, the CLI isn't authenticated)
+- Cursor: `agent status` (the binary from Step 1)
+- Copilot: `copilot /session` won't work headless; check env vars `GH_TOKEN` / `COPILOT_GITHUB_TOKEN` / `GITHUB_TOKEN`. If any is set, assume authenticated. Otherwise try a one-shot `copilot -p "hi" --allow-all-tools` with a 15s timeout — auth failures surface quickly.
 
 If unauthenticated, give the exact login command and use `AskUserQuestion` to ask whether to pause for the user to log in or skip that CLI.
 
-## Step 3 — Ask for API keys (Exa required, Context7 optional)
+## Step 3 — Collect API keys (Exa required, Context7 optional)
 
-Check `~/.claude/plugins/cc-multi-cli-plugin/config.json` for stored keys. If both are already present, skip Step 3 entirely. Otherwise, ask only for what's missing.
+### Step 3a — Look for keys the user ALREADY HAS before prompting
+
+Claude Code and other MCP-using tools often already have these keys on the user's machine. Before bothering the user with a prompt, do this discovery pass via `Read`:
+
+1. **Plugin's own stored keys:** `~/.claude/plugins/cc-multi-cli-plugin/config.json` (if exists, parse; use `exaApiKey` / `context7ApiKey` fields).
+2. **Claude Code's project-level MCP config:** `~/.claude/.mcp.json` (parse JSON; look for any `mcpServers.<name>.env.EXA_API_KEY` and `.CONTEXT7_API_KEY`).
+3. **Other CLI configs on the system** — since the user might already have these MCPs wired to another CLI:
+   - `~/.codex/config.toml` — TOML parse; look for `mcp_servers.<any-name>.env.EXA_API_KEY` (any exa-flavored server) and `.CONTEXT7_API_KEY`.
+   - `~/.gemini/settings.json` — same idea.
+   - `~/.cursor/mcp.json` — same.
+   - `~/.copilot/mcp-config.json` — same.
+4. **Common env vars:** `$EXA_API_KEY` in the shell environment. Uncommon but worth a one-line check.
+
+If you find a plausible key, compose a summary and ASK before using it (via `AskUserQuestion`):
+
+> "I found what looks like an Exa key already present in `<file>`. Reuse it, or paste a different key?"
+> - Option: "Reuse the key from `<file>`"
+> - (implicit free-text: paste a different key)
+
+If you find nothing, proceed to the explicit prompt (Step 3b).
+
+### Step 3b — Prompt for keys not found in Step 3a
 
 **Each key prompt should use EXACTLY ONE button option.** `AskUserQuestion` always has an implicit free-text input box alongside the button options — the user either clicks the button OR types their key as a free-text response. Adding a "Paste key" button is redundant with the free-text input.
 
@@ -85,9 +106,25 @@ Ask via `AskUserQuestion`:
 
 The user either clicks Skip or pastes the key.
 
-### Save
+### Step 3c — Validate the Exa key via a quick API probe (fail fast)
 
-After collecting both answers, write `~/.claude/plugins/cc-multi-cli-plugin/config.json` with mode 0600:
+If the user provided an Exa key (either reused from Step 3a or pasted in Step 3b), verify it works BEFORE writing it to 4 config files:
+
+```bash
+curl -sS -X POST https://api.exa.ai/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <KEY>" \
+  -d '{"query":"test","numResults":1}' \
+  -w "\n%{http_code}" | tail -1
+```
+
+Expected: `200`. Anything else (401, 403) means the key is bad — report the HTTP code to the user and ask for a correct key via `AskUserQuestion` (or Skip).
+
+Don't validate Context7 — the MCP works without a key; a bad key would just degrade it to free-tier and that's visible on first use.
+
+### Step 3d — Save
+
+Write `~/.claude/plugins/cc-multi-cli-plugin/config.json`:
 
 ```json
 {
@@ -96,7 +133,9 @@ After collecting both answers, write `~/.claude/plugins/cc-multi-cli-plugin/conf
 }
 ```
 
-Create the directory with `Bash` if it doesn't exist. Never echo either key back to the user after capture — just confirm "Saved." If the user skipped a key, store an empty string (Step 4's config-writing logic uses empty-string as the "skip env block" signal).
+Create the directory with `Bash` if it doesn't exist. **File permissions:** on Unix, `chmod 600` the file. On Windows, skip the chmod — NTFS default ACLs on user-profile paths already restrict to that user. Note in your summary to the user that this file "has user-profile ACL restrictions" on Windows or "is 0600" on Unix.
+
+Never echo either key back after capture — just confirm "Saved." If the user skipped a key, store an empty string (Step 4 treats empty-string as the "omit env block" signal).
 
 ## Step 4 — Configure MCPs per CLI
 
@@ -119,7 +158,7 @@ For each installed, authenticated CLI, do the following:
    # BEGIN cc-multi-cli-plugin managed block — do not edit by hand
    [mcp_servers.exa]
    command = "npx"
-   args = ["-y", "@exa/mcp-server-exa"]
+   args = ["-y", "exa-mcp-server"]
    env = { EXA_API_KEY = "<EXA_KEY_FROM_CONFIG>" }
 
    [mcp_servers.context7]
@@ -137,7 +176,7 @@ For each installed, authenticated CLI, do the following:
    ```json
    "exa": {
      "command": "npx",
-     "args": ["-y", "@exa/mcp-server-exa"],
+     "args": ["-y", "exa-mcp-server"],
      "env": { "EXA_API_KEY": "<EXA_KEY_FROM_CONFIG>" }
    }
    ```
@@ -167,7 +206,15 @@ For each installed, authenticated CLI, do the following:
    ```
    Update this file each time you add servers to a CLI's config. The customize skill and any future uninstall logic can read it to know which entries were added by this plugin vs the user.
 
-   **Conflict handling:** If the user already has an `exa` or `context7` server under a different configuration, do NOT overwrite — report the conflict and ask via `AskUserQuestion` whether to replace or keep theirs.
+   **Conflict handling — purpose-aware, not name-aware:** Before merging, scan the existing `mcpServers` object for any server that looks Exa-related (name matches `/exa/i`, OR args include `exa-mcp-server` or `@exa/`, OR httpUrl mentions `exa.ai`) and any that looks Context7-related (name matches `/context7/i`, OR args include `@upstash/context7-mcp`, OR httpUrl mentions `context7`). If you find such a server under ANY name (e.g., `exa-websearch`, `grep`, `context7-docs`):
+
+   - Stop merging that one server silently.
+   - Report the finding: "You already have `<existing-name>` configured for <Exa|Context7>: `<one-line-summary>`."
+   - Ask via `AskUserQuestion`: "Keep yours" / "Replace with plugin default".
+   - If "Keep yours", skip adding our entry for this CLI+server; continue with the other server. If "Replace", remove the existing entry and add ours.
+   - Name-level collision (user has a server literally named `exa` or `context7`) is the same flow — not special.
+
+   **`npx` vs `httpUrl`:** the plugin's default is `npx -y <package>` (stdio transport) for consistency across systems and for cases where the user is offline after first fetch. An existing HTTP transport (e.g., `httpUrl: "https://mcp.context7.com/mcp"`) is legitimate and often faster. Do not present npx as objectively better — when the user has an HTTP version, the "Keep yours" option is reasonable.
 
 6. Use `Read` to pull the file, `Edit`/`Write` to apply changes. Preserve the user's other keys and structure.
 
@@ -193,16 +240,25 @@ Do NOT run slow "ask the CLI to invoke a tool" probes — those take 30s-2min pe
 
 ## Step 6 — Report
 
-Print a concise summary:
+Print a concise summary. Include the list of files that now embed the API keys — useful when the user wants to rotate a key later.
 
 ```
 cc-multi-cli-plugin setup complete.
+
+Per-CLI status:
   ✓ Codex: configured (exa, context7)
   ✓ Gemini: configured (exa, context7)
-  ⚠ Cursor: skipped — not authenticated (run `agent login`)
+  ⚠ Cursor: skipped — not authenticated (run `agent status`)
   ✗ Copilot: configuration failed — <error message>
 
-Backed-up configs (restore by copying <file>.bak back):
+Keys embedded in (rotate by editing these if needed):
+  ~/.claude/plugins/cc-multi-cli-plugin/config.json  (plugin's canonical copy)
+  ~/.codex/config.toml
+  ~/.gemini/settings.json
+  ~/.cursor/mcp.json
+  ~/.copilot/mcp-config.json
+
+Backups (restore by copying .bak back):
   ~/.codex/config.toml.bak
   ~/.gemini/settings.json.bak
   ~/.cursor/mcp.json.bak
@@ -210,7 +266,7 @@ Backed-up configs (restore by copying <file>.bak back):
 
 Next steps:
   - Try `/gemini:research <topic>` or any other plugin command.
-  - Re-run `/multi:setup` anytime to reconfigure.
+  - Re-run `/multi:setup` anytime to reconfigure (it's idempotent and skips already-configured pieces).
 ```
 
 ## Dry-run mode

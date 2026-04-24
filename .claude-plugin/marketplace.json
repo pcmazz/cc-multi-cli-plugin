@@ -1,0 +1,22 @@
+{
+  "name": "cc-multi-cli-plugin",
+  "owner": {
+    "name": "greenpolo",
+    "url": "https://github.com/greenpolo"
+  },
+  "metadata": {
+    "description": "Marketplace for cc-multi-cli-plugin — Claude Code delegation to Codex, Gemini, Cursor, and GitHub Copilot CLIs via native protocols.",
+    "version": "2.0.0"
+  },
+  "plugins": [
+    {
+      "name": "cc-multi-cli-plugin",
+      "description": "Delegate work from Claude Code to Codex, Gemini, Cursor, and GitHub Copilot CLIs via native structured protocols.",
+      "version": "2.0.0",
+      "author": {
+        "name": "greenpolo"
+      },
+      "source": "./plugins/cc-multi-cli-plugin"
+    }
+  ]
+}

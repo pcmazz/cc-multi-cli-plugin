@@ -19,31 +19,29 @@ Before writing any code, pull everything you need to know about the CLI so you d
 - **Authentication mechanism** — env var, OAuth, device code, API key header, etc.
 - **Known quirks** (Windows shell requirements, PATH issues, version-specific behavior).
 
-**How to look things up — run these three in parallel:**
+**Pick sources proportional to the question.** Do NOT run every source for every fact. Start cheap and authoritative; escalate only if unclear.
 
-1. **Ask the CLI directly** (ground truth for "will this work right now").
-   - Try `<cli> --help`, `<cli> models`, `<cli> status`, `<cli> about` first — subcommands if they exist.
-   - If the CLI has no `models` subcommand, prompt it:
-     ```bash
-     <cli> -p "List the exact model ID strings this CLI currently accepts. Reply with just the IDs, one per line."
-     ```
-   - Every AI CLI can answer a natural-language prompt about itself.
+Preferred order per question:
 
-2. **Read the CLI's source constants** (canonical, version-pinned). Use exa:
+1. **`<cli> --help`, `<cli> models`, `<cli> about`** — fastest, no network, authoritative for "what does this binary accept right now."
+2. **Prompt the CLI itself** (when no listing subcommand exists):
+   ```bash
+   <cli> -p "List the exact <thing> strings this CLI accepts. One per line."
    ```
-   "<cli-name> github models.ts model constants"
-   ```
-   Most AI CLIs have a `config/models.ts`, `constants.py`, or similar exporting the valid identifiers. These are authoritative and rarely move.
+3. **Vendor docs via context7** — `resolve-library-id` → `query-docs`. Good for canonical names and deprecation context.
+4. **exa web search** — for changelogs, forum posts, obscure flags context7 doesn't have.
+5. **CLI source on GitHub** — `config/models.ts` constants. Slowest; use only when 1–4 disagree or come up empty.
 
-3. **Check vendor docs via context7 or exa** for deprecation timelines, aliasing, and recent breaking changes. (Example: Gemini's `gemini-3-pro-preview` was retired 2026-03-09 and now aliases to `gemini-3.1-pro-preview`. The CLI still accepts the old ID but you shouldn't hardcode it.)
+For a yes/no question ("does this CLI have ACP?") use source 1 or 3 and stop. For a canonical ID that gets hardcoded into files, use 1 plus 3 or 4 to cross-check — two sources is enough.
 
-**Preview-suffix trap:** Many CLIs qualify unstable IDs with a suffix (`-preview`, `-beta`, `-exp`). Don't hardcode the unsuffixed variant — it will 404 at runtime. Gemini 3.x IDs all end in `-preview`.
+**Hard rules:**
+- **Never ask one CLI about another CLI's features.** It hallucinates as badly as you would. A CLI is a source only for itself.
+- **Preview-suffix trap:** Many CLIs qualify unstable IDs with a suffix (`-preview`, `-beta`, `-exp`). Don't hardcode the unsuffixed variant — it will 404 at runtime. Gemini 3.x IDs all end in `-preview`.
+- **Resolving disagreements:** CLI wins for "does it work right now"; docs win for "should I use this."
+- **Record the source you used** inline in your response so the user can catch a bad citation.
+- **Check existing adapters** in `plugins/multi/scripts/lib/adapters/` as reference templates for the transport pattern you'll reuse.
 
-**Resolving disagreements:** CLI wins for "does it work"; docs win for "should I use this."
-
-4. **Check existing adapters** in `plugins/multi/scripts/lib/adapters/` as reference templates for the transport pattern you'll reuse.
-
-Record findings in your response to the user (so they can double-check), then proceed without asking for confirmation on verifiable facts.
+Proceed without asking the user to confirm facts you can verify yourself.
 
 ## Prerequisites — confirm the CLI speaks a structured transport
 

@@ -48,41 +48,48 @@ The output is ground truth for what exists. Planning against it avoids the "suba
 
 ## Step 2 — Verify CLI-specific strings BEFORE hardcoding them
 
-Before hardcoding any CLI-specific string (model IDs, effort levels, sandbox modes, flag names, slash commands, mode names) as a default, verify it. Do not ask the user to confirm these — Claude can look them up faster and more reliably than the user can recall them.
+Before hardcoding any CLI-specific string (model IDs, effort levels, sandbox modes, flag names, slash commands, mode names) as a default, verify it. Do not ask the user to confirm these — Claude can look them up faster.
 
-**The verification-trap:** CLIs often accept version-qualified IDs (`-preview`, `-beta`, `-exp` suffixes). Dropping the suffix produces a runtime 4xx. Gemini's `gemini-3.1-pro-preview` is *not* interchangeable with `gemini-3.1-pro`; the latter 404s. Every CLI has analogous traps — verify first.
+**The verification-trap:** CLIs often accept version-qualified IDs (`-preview`, `-beta`, `-exp` suffixes). Dropping the suffix produces a runtime 4xx. Gemini's `gemini-3.1-pro-preview` is *not* interchangeable with `gemini-3.1-pro`; the latter 404s. Every CLI has analogous traps.
 
-### Three sources to run in parallel
+### Pick ONE source proportional to the question. Stop when confident.
 
-They're independent and cross-check each other.
+Do NOT run every source for every question. The verification sources form a LADDER — start with the cheapest authoritative one for the question at hand and stop as soon as you have a confident answer.
 
-**1. Ask the CLI directly** (ground truth: "will it work right now").
+**Decision tree:**
 
-If the CLI has a listing subcommand, use it (`<cli> models`, `<cli> --help`, `<cli> about`). If it doesn't, prompt it:
+- **Yes/no capability check** — "does `<cli>` have a `/<slash-command>` command?" or "does `<cli>` support `--read-only`?" → ONE source. Usually `<cli> --help | grep <term>` in well under a second. Done. Don't escalate.
 
-```bash
-<cli> -p "List the exact model ID strings this CLI currently accepts for the model flag. Reply with just the IDs, one per line."
-```
+- **Enumerating what exists** — "what slash commands does `<cli>` have?" or "what models does `<cli>` accept?" → ONE source. Try `<cli> --help` first, or a vendor-docs lookup via context7 if `--help` isn't exhaustive. Escalate to a second source only if the first comes up empty or suspicious.
 
-Every AI CLI can answer a natural-language prompt about itself.
+- **Exact canonical ID with version suffix** (e.g., "what's the current stable model ID for Gemini's flash tier?") — up to TWO sources when the answer must be typed into code and a wrong suffix bricks the feature. Prefer (a) asking the CLI itself via a natural-language prompt, then cross-check with (b) vendor docs. Only escalate to reading source constants on disagreement.
 
-**2. Read the CLI's source constants** (canonical, version-pinned).
+### The sources, in the order you'd try them
 
-Most CLIs export valid identifiers as constants in `config/models.ts`, `constants.py`, or similar. Use exa:
+1. **`<cli> --help`, `<cli> models`, `<cli> about`** — fastest. No network. Authoritative for "what does this binary accept right now."
 
-```
-"<cli-name> github models.ts model constants"
-```
+2. **Prompt the CLI itself** (when no listing subcommand exists):
+   ```bash
+   <cli> -p "List the exact <thing> strings this CLI accepts. One per line."
+   ```
+   Only the CLI's OWN self-description. Never ask a DIFFERENT CLI (e.g., don't ask Gemini about Copilot's slash commands — Gemini is guessing, same as you would be).
 
-**3. Check vendor docs + release notes** via context7 (proactively) or exa for:
-- Deprecation timelines and aliasing
-- Recently added modes, flags, or slash commands
-- Known breaking changes
+3. **Vendor docs via context7** — `resolve-library-id` → `query-docs`. Good for canonical names and deprecation context.
 
-### Resolving disagreements
+4. **Web search via exa** — for recent changelogs, forum posts, or obscure flags not covered by context7.
+
+5. **CLI source on GitHub** — `config/models.ts` constants, etc. Use only when 1–4 disagree or come up empty; it's slowest.
+
+### Hard rules
+
+- **Never ask one CLI about another CLI's features.** It's just as likely to hallucinate as you are. Only use a CLI as a source for itself.
+- **Record the source you used inline in your response** so the user sees which sources you checked (and can catch if you cited an unreliable one).
+- **Claim "unverified" honestly** if a string is rare or your sources didn't surface a confident answer. Don't ship guesses as verified facts.
+
+### Resolving disagreements (rare — usually only one source is needed)
 
 - **CLI wins** for "will it work right now."
-- **Docs win** for "should I use this" (e.g., avoid deprecated IDs even if the CLI still accepts them).
+- **Docs win** for "should I use this" (deprecation, aliasing).
 
 ### Also verify per CLI
 

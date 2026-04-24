@@ -530,9 +530,8 @@ async function executeTaskRun(request) {
       approvalMode,
       onStream: request.onProgress
         ? (event) => {
-            if (event.type === "message_chunk" && event.text) {
-              request.onProgress(event.text);
-            } else if (event.type === "phase") {
+            // Drop message_chunk events — see cursor branch comment for rationale.
+            if (event.type === "phase") {
               request.onProgress({ message: event.message, phase: event.message });
             }
           }
@@ -598,9 +597,12 @@ async function executeTaskRun(request) {
       role: request.role ?? "writer",
       onStream: request.onProgress
         ? (event) => {
-            if (event.type === "message_chunk" && event.text) {
-              request.onProgress(event.text);
-            } else if (event.type === "phase") {
+            // message_chunk events are dropped from the stderr progress stream —
+            // Cursor streams at token granularity and each chunk becomes its own
+            // log line. The final text appears in the rendered output when the
+            // task completes, so chunks are redundant noise. Phase events pass
+            // through so the user sees "things happening" feedback.
+            if (event.type === "phase") {
               request.onProgress({ message: event.message, phase: event.message });
             }
           }
@@ -666,9 +668,8 @@ async function executeTaskRun(request) {
       role: request.role ?? "default",
       onStream: request.onProgress
         ? (event) => {
-            if (event.type === "message_chunk" && event.text) {
-              request.onProgress(event.text);
-            } else if (event.type === "phase") {
+            // Drop message_chunk events — see cursor branch comment for rationale.
+            if (event.type === "phase") {
               request.onProgress({ message: event.message, phase: event.message });
             }
           }

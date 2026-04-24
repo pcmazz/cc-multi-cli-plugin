@@ -478,7 +478,8 @@ async function executeTaskRun(request) {
 
   const taskMetadata = buildTaskRunMetadata({
     prompt: request.prompt,
-    resumeLast: request.resumeLast
+    resumeLast: request.resumeLast,
+    cli
   });
 
   // ── Gemini dispatch path ────────────────────────────────────────────────────
@@ -623,7 +624,7 @@ function buildReviewJobMetadata(reviewName, target) {
   };
 }
 
-function buildTaskRunMetadata({ prompt, resumeLast = false }) {
+function buildTaskRunMetadata({ prompt, resumeLast = false, cli = "codex" }) {
   if (!resumeLast && String(prompt ?? "").includes(STOP_REVIEW_TASK_MARKER)) {
     return {
       title: "Codex Stop Gate Review",
@@ -631,7 +632,8 @@ function buildTaskRunMetadata({ prompt, resumeLast = false }) {
     };
   }
 
-  const title = resumeLast ? "Codex Resume" : "Codex Task";
+  const cliLabel = cli === "gemini" ? "Gemini" : "Codex";
+  const title = resumeLast ? `${cliLabel} Resume` : `${cliLabel} Task`;
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
   return {
     title,
@@ -639,8 +641,11 @@ function buildTaskRunMetadata({ prompt, resumeLast = false }) {
   };
 }
 
-function renderQueuedTaskLaunch(payload) {
-  return `${payload.title} started in the background as ${payload.jobId}. Check /codex:status ${payload.jobId} for progress.\n`;
+function renderQueuedTaskLaunch(payload, cli) {
+  if (cli === "codex") {
+    return `${payload.title} started in the background as ${payload.jobId}. Check /codex:status ${payload.jobId} for progress (requires the openai-codex plugin).\n`;
+  }
+  return `${payload.title} started in the background as ${payload.jobId}. Ask Claude to check on job ${payload.jobId} when you want an update.\n`;
 }
 
 function getJobKindLabel(kind, jobClass) {
@@ -844,7 +849,8 @@ async function handleTask(argv, context = {}) {
   const write = Boolean(options.write) && !Boolean(options["read-only"]);
   const taskMetadata = buildTaskRunMetadata({
     prompt,
-    resumeLast
+    resumeLast,
+    cli
   });
 
   if (options.background) {
@@ -872,7 +878,7 @@ async function handleTask(argv, context = {}) {
       cli
     });
     const { payload } = enqueueBackgroundTask(cwd, job, request);
-    outputCommandResult(payload, renderQueuedTaskLaunch(payload), options.json);
+    outputCommandResult(payload, renderQueuedTaskLaunch(payload, cli), options.json);
     return;
   }
 

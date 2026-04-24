@@ -67,24 +67,23 @@ If unauthenticated, give the exact login command and use `AskUserQuestion` to as
 
 Check `~/.claude/plugins/cc-multi-cli-plugin/config.json` for stored keys. If both are already present, skip Step 3 entirely. Otherwise, ask only for what's missing.
 
-**Each key prompt should use EXACTLY two options** — keep it simple, no confusing multi-choice trees:
-
-- Option 1: **"Skip"**
-- Option 2: **"Paste key below"** — user types/pastes the key as their response
+**Each key prompt should use EXACTLY ONE button option.** `AskUserQuestion` always has an implicit free-text input box alongside the button options — the user either clicks the button OR types their key as a free-text response. Adding a "Paste key" button is redundant with the free-text input.
 
 ### Exa API key (required for Exa MCP to function)
 
 Ask via `AskUserQuestion`:
-- **Header text:** "Exa API key (required). Get one free at https://dashboard.exa.ai. If you skip, the Exa MCP will be configured without a key and will fail at runtime."
-- **Option 1:** "Skip — configure Exa without a key (server will fail until key is added)"
-- **Option 2:** "Paste key below" (free-text input for the key)
+- **Header / question text:** "Exa API key (required for the Exa MCP to work). Get one free at https://dashboard.exa.ai. To provide one, paste the key as your response. Otherwise click Skip — the Exa MCP will be registered without a key and will fail at runtime until you add one."
+- **Button option:** "Skip — register Exa without a key (will fail at runtime)"
+
+The user either clicks Skip or pastes the key. Treat the free-text response (if any) as the API key.
 
 ### Context7 API key (optional)
 
 Ask via `AskUserQuestion`:
-- **Header text:** "Context7 API key (optional). Works without a key at free-tier rate limits. With a key (free at https://context7.com): higher rate limits + access to researchMode for deeper synthesis."
-- **Option 1:** "Skip — use Context7 at free-tier limits"
-- **Option 2:** "Paste key below" (free-text input for the key)
+- **Header / question text:** "Context7 API key (optional). Works without a key at free-tier rate limits. With a key (free at https://context7.com): higher rate limits + access to researchMode for deeper synthesis. To provide one, paste the key as your response. Otherwise click Skip."
+- **Button option:** "Skip — use Context7 at free-tier limits"
+
+The user either clicks Skip or pastes the key.
 
 ### Save
 

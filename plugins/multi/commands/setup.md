@@ -118,7 +118,11 @@ For each installed CLI, check auth:
 - Codex: `codex login status` (NOT `codex whoami` — that doesn't exist)
 - Gemini: `gemini --version` should run without prompting for login (if it prompts, the CLI isn't authenticated)
 - Cursor: `agent status` (the binary from Step 1)
-- Copilot: `copilot /session` won't work headless; check env vars `GH_TOKEN` / `COPILOT_GITHUB_TOKEN` / `GITHUB_TOKEN`. If any is set, assume authenticated. Otherwise try a one-shot `copilot -p "hi" --allow-all-tools` with a 15s timeout — auth failures surface quickly.
+- Copilot: **DO NOT** run a `copilot -p "hi"` inference probe — that burns ~10-20k premium tokens just to check auth. Cheap path:
+  1. Check env vars `GH_TOKEN` / `COPILOT_GITHUB_TOKEN` / `GITHUB_TOKEN` — if any is set, assume authenticated.
+  2. Else check `gh auth status` (the GitHub CLI shares Copilot's auth layer). Exit 0 = authenticated.
+  3. Else check for a Copilot auth file at `~/.copilot/` (look for any auth-related JSON/config; Copilot stores tokens there once logged in).
+  4. Only as last resort, fall back to a tiny `--help`-class probe that doesn't trigger inference. Never use `copilot -p`.
 
 If unauthenticated, give the exact login command and use `AskUserQuestion` to ask whether to pause for the user to log in or skip that CLI.
 
@@ -165,10 +169,11 @@ Ask via `AskUserQuestion`:
 
 The user either clicks Skip or pastes the key.
 
-### Step 3c — Validate the Exa key via a quick API probe (fail fast)
+### Step 3c — Validate provided keys via quick API probes (fail fast)
 
-If the user provided an Exa key (either reused from Step 3a or pasted in Step 3b), verify it works BEFORE writing it to 4 config files:
+For EACH key the user provided (reused from Step 3a or pasted in Step 3b), verify it works BEFORE writing to config files. Both probes are < 1s.
 
+**Exa:**
 ```bash
 curl -sS -X POST https://api.exa.ai/search \
   -H "Content-Type: application/json" \
@@ -176,10 +181,17 @@ curl -sS -X POST https://api.exa.ai/search \
   -d '{"query":"test","numResults":1}' \
   -w "\n%{http_code}" | tail -1
 ```
+Expected: `200`. 401/403 → key is bad; ask for a correct one or Skip.
 
-Expected: `200`. Anything else (401, 403) means the key is bad — report the HTTP code to the user and ask for a correct key via `AskUserQuestion` (or Skip).
+**Context7** (only if a key was provided — empty key is a valid "use free tier" signal):
+```bash
+curl -sS https://context7.com/api/v1/health \
+  -H "Authorization: Bearer <KEY>" \
+  -w "\n%{http_code}" | tail -1
+```
+Expected: `200`. 401/403 → key bad; ask for correction or Skip. The "key was valid yesterday but is wrong today" case is real (rotation, expired) — catching it here saves a future debug session.
 
-Don't validate Context7 — the MCP works without a key; a bad key would just degrade it to free-tier and that's visible on first use.
+If a key fails validation, do NOT proceed to write it to any config file.
 
 ### Step 3d — Save
 
@@ -206,9 +218,23 @@ For each installed, authenticated CLI, do the following:
    - Cursor: `~/.cursor/mcp.json` (create if missing as `{ "mcpServers": {} }`)
    - Copilot: `~/.copilot/mcp-config.json` (create if missing as `{ "mcpServers": {} }`)
 
-2. **Back up the existing file** as `<file>.bak` if it exists and no `.bak` already present.
+2. **Back up the existing file** with mtime-aware rotation:
+   - If `<file>.bak` doesn't exist → create it.
+   - If `<file>.bak` exists AND its mtime is older than the live `<file>`'s mtime → the existing `.bak` is stale (predates the current state). Rotate it: rename existing `<file>.bak` to `<file>.bak.<YYYYMMDD-HHMMSS>` (timestamped), then create a fresh `<file>.bak` from the current live file.
+   - If `<file>.bak` exists AND its mtime is ≥ live `<file>`'s mtime → already current; skip.
 
-3. **Merge the cc-multi-cli-plugin managed block** (see templates below).
+   **Why mtime rotation matters:** the prior "create only if not present" rule produced stale backups after re-runs — Step 6's "restore by copying .bak back" instruction could undo the user's managed entries. Mtime rotation guarantees `.bak` always reflects state immediately before the current run's edits.
+
+3. **AUDIT existing managed entries first, then merge.** This is NOT a one-shot "additive merge" — re-runs of `/multi:setup` need to detect drift from prior versions of this skill (e.g., stale `_cc_multi_managed: true` marker keys that break Gemini's schema validator). Audit pass:
+
+   - Read the current config file.
+   - For each existing entry that IS one of our managed servers (`exa`, `context7`, OR matches the purpose patterns from the conflict-handling section below):
+     - **If it has stale marker keys** (`_cc_multi_managed`, etc.) → strip them and report `cleaned stale marker on <cli>:<server>`.
+     - **If its credentials differ from the canonical config.json values** (e.g., embedded Exa key doesn't match `exaApiKey` in plugin config) → report drift, ask via `AskUserQuestion` whether to update to the canonical value or keep the existing.
+     - **If its shape (command/args/env) matches what we'd write fresh** → leave alone, report `unchanged`.
+   - For each canonical server we WANT to add but isn't present → proceed with merge per the templates below.
+
+   Treat "audit + reconcile" as the default behavior, not a special case.
 
 4. **Codex — TOML**: Append the managed block, wrapped in comment markers. Include `CONTEXT7_API_KEY` in Context7's env ONLY if the user provided a Context7 key; otherwise omit the env line entirely (server still works at free-tier rate limits).
 
@@ -273,6 +299,12 @@ For each installed, authenticated CLI, do the following:
    - If "Keep yours", skip adding our entry for this CLI+server; continue with the other server. If "Replace", remove the existing entry and add ours.
    - Name-level collision (user has a server literally named `exa` or `context7`) is the same flow — not special.
 
+   **Dual-credential drift** (multiple servers, same purpose, different keys): If the audit detects MULTIPLE Exa-purpose entries (e.g., both `exa` and `exa-websearch` present) AND their credentials differ (different `EXA_API_KEY` values, or one uses a key in args/URL while the other uses env), report the drift explicitly:
+
+   *"Found two Exa servers with different credentials: `exa` (key ending …a3adec) and `exa-websearch` (key ending …b254f3). Only one of these is correct."*
+
+   Ask via `AskUserQuestion`: "Consolidate to canonical (use the key from `~/.claude/plugins/cc-multi-cli-plugin/config.json`, drop the duplicate)" / "Keep both" / "Skip — investigate manually". Don't silently merge alongside; that's how dual-credential drift accumulated invisibly in the first place.
+
    **`npx` vs `httpUrl`:** the plugin's default is `npx -y <package>` (stdio transport) for consistency across systems and for cases where the user is offline after first fetch. An existing HTTP transport (e.g., `httpUrl: "https://mcp.context7.com/mcp"`) is legitimate and often faster. Do not present npx as objectively better — when the user has an HTTP version, the "Keep yours" option is reasonable.
 
 6. Use `Read` to pull the file, `Edit`/`Write` to apply changes. Preserve the user's other keys and structure.
@@ -288,7 +320,13 @@ Do NOT run slow "ask the CLI to invoke a tool" probes — those take 30s-2min pe
 | Cursor | `"<path>/agent.cmd" mcp list` or `agent mcp list` on Unix | exa + context7 listed |
 | Copilot | No direct listing command found — read `~/.copilot/mcp-config.json` and parse to confirm `mcpServers.exa` and `mcpServers.context7` exist | servers present in JSON |
 
-**If any of these fail** (non-zero exit, schema error, missing servers in output):
+**Empty-output gotcha — re-probe with verbose flag before declaring failure.** Some CLIs (notably `gemini mcp list`) exit 0 with empty stdout when servers are correctly configured but the parser used for table rendering is in a weird state. If a probe exits 0 with empty output, retry once with the CLI's verbose/debug flag (`gemini mcp list -d`, etc.) and parse from there. ONLY after both probes return empty should you declare a failure. Exit-0-empty-stdout is not a reliable failure signal.
+
+**Secrets warning when running verbose probes:** verbose / `-d` outputs often print env vars unmasked (Gemini does, Codex masks). If the user is screen-sharing or recording their terminal, this leaks the API key into scrollback. Before running any verbose probe, print:
+
+> *"Running verbose probe for <cli> — output may include API keys. If you're sharing your screen, look away or skip this verification step."*
+
+**If any probe fails** (non-zero exit, schema error, missing servers after both list and verbose):
 - Print the exact error.
 - Do NOT roll back automatically — let the user see what went wrong.
 - For schema errors (e.g., Gemini rejecting unknown keys), tell the user which config file has the issue and quote the error message.
@@ -297,9 +335,23 @@ Do NOT run slow "ask the CLI to invoke a tool" probes — those take 30s-2min pe
 
 **Don't verify MCP server runtime reachability here.** The CLI listing each server confirms the config is valid and the CLI will spawn the server on first use. The server actually responding to queries is tested on the first real `/gemini:research` / `/copilot:research` / etc. invocation — not in setup.
 
-## Step 6 — Report
+## Step 6 — Report (with key inventory + drift summary)
 
-Print a concise summary. Include the list of files that now embed the API keys — useful when the user wants to rotate a key later.
+Before printing the final summary, run a **key inventory pass** — scan all likely locations for embedded Exa or Context7 keys, including locations this wizard does NOT manage. The user needs to see the full surface area before considering rotation.
+
+Locations to scan (read-only; report findings; don't modify):
+
+- `~/.claude/plugins/cc-multi-cli-plugin/config.json` — plugin's canonical copy (managed)
+- `~/.codex/config.toml` (managed)
+- `~/.gemini/settings.json` (managed)
+- `~/.cursor/mcp.json` (managed)
+- `~/.copilot/mcp-config.json` (managed)
+- `~/.claude/.mcp.json` — Claude Code's own MCP config (UNMANAGED — user maintains this)
+- Any project-local `.mcp.json` files in commonly-used directories (cwd at minimum; report only)
+
+For each file containing an Exa or Context7 key, show: file path, which key (Exa or Context7), key fingerprint (last 6 chars), and whether it's managed by this wizard. If the same key family has different fingerprints across files, flag it as drift.
+
+Then print the concise summary. Include the list of files that now embed the API keys — useful when the user wants to rotate a key later.
 
 ```
 cc-multi-cli-plugin setup complete.
@@ -310,22 +362,36 @@ Per-CLI status:
   ⚠ Cursor: skipped — not authenticated (run `agent status`)
   ✗ Copilot: configuration failed — <error message>
 
-Keys embedded in (rotate by editing these if needed):
-  ~/.claude/plugins/cc-multi-cli-plugin/config.json  (plugin's canonical copy)
-  ~/.codex/config.toml
-  ~/.gemini/settings.json
-  ~/.cursor/mcp.json
-  ~/.copilot/mcp-config.json
+Drift cleaned this run:
+  - Stripped stale _cc_multi_managed marker from cursor/exa, cursor/context7
+  - <or report 'no drift' if none found>
 
-Backups (restore by copying .bak back):
-  ~/.codex/config.toml.bak
-  ~/.gemini/settings.json.bak
-  ~/.cursor/mcp.json.bak
-  ~/.copilot/mcp-config.json.bak
+Key inventory (where Exa/Context7 keys are embedded right now):
+  managed by this wizard:
+    ~/.claude/plugins/cc-multi-cli-plugin/config.json  exa…a3adec  ctx7…c7e8c8
+    ~/.codex/config.toml                                exa…a3adec  ctx7…c7e8c8
+    ~/.gemini/settings.json                             exa…a3adec  ctx7…c7e8c8
+    ~/.cursor/mcp.json                                  exa…a3adec  ctx7…c7e8c8
+    ~/.copilot/mcp-config.json                          exa…a3adec  ctx7…c7e8c8
+  not managed (review yourself):
+    ~/.claude/.mcp.json                                 exa…a3adec  ctx7…c7e8c8
+  drift detected: <none | list of files with mismatched fingerprints>
+
+Backups (restore by copying .bak back — this run rotated stale ones):
+  ~/.codex/config.toml.bak             (mtime: 2026-04-24 19:14 — fresh)
+  ~/.codex/config.toml.bak.20260424-191100  (older snapshot, kept for reference)
+  ~/.gemini/settings.json.bak          (mtime: 2026-04-24 19:14 — fresh)
+  ~/.cursor/mcp.json.bak               (mtime: 2026-04-24 19:14 — fresh)
+  ~/.copilot/mcp-config.json.bak       (mtime: 2026-04-24 19:14 — fresh)
+
+Tracking file:
+  ~/.claude/plugins/cc-multi-cli-plugin/managed-servers.json
+  (lists which server names this wizard adds per CLI — used by the customize skill
+   and by future /multi:uninstall to know what to remove cleanly.)
 
 Next steps:
   - Try `/gemini:research <topic>` or any other plugin command.
-  - Re-run `/multi:setup` anytime to reconfigure (it's idempotent and skips already-configured pieces).
+  - Re-run `/multi:setup` anytime to reconfigure (idempotent: audits + reconciles drift, skips no-ops).
 ```
 
 ## Dry-run mode

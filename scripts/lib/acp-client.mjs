@@ -253,7 +253,7 @@ function resolveCliBinary(command) {
   }
   // On Windows, use `where` to locate the first match (.cmd / .exe / .bat).
   try {
-    const found = execSync(`where ${command}`, { encoding: "utf8" })
+    const found = execSync(`where "${command}"`, { encoding: "utf8" })
       .split(/\r?\n/)
       .filter(Boolean)[0];
     return found ? found.replace(/\\/g, "/") : command;

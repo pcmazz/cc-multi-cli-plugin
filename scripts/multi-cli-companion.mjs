@@ -95,6 +95,8 @@ function printUsage() {
   console.log(
     [
       "Usage:",
+      "  Global flags:",
+      "    --cli <codex|gemini|cursor|copilot>   Select the CLI adapter (default: codex)",
       "  node scripts/multi-cli-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/multi-cli-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/multi-cli-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",

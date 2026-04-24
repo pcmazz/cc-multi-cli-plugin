@@ -52,6 +52,63 @@ For each detected CLI, check the current install state FIRST, then act:
 
 **Why this matters:** `claude plugin install` is destructive — it re-fetches and overwrites the cache even for already-installed plugins. Running installs on things already present wastes time and can disrupt active development setups. Guarding with the initial check makes `/multi:setup` safely re-runnable.
 
+## Step 1.7 — Offer to add CLI binaries to the user's PATH (optional)
+
+**Purpose:** Pure UX. The plugin works regardless — each adapter resolves binaries via absolute path. This step is for users who want to type `agent` / `codex` / `gemini` / `copilot` from any terminal without typing a full path.
+
+**For each installed CLI**, do this check:
+
+1. **Resolve the binary's directory.** The Step 1 detection already determined the working binary — derive its parent directory (e.g., for `C:/Users/<n>/AppData/Local/cursor-agent/agent.cmd`, the directory is `C:/Users/<n>/AppData/Local/cursor-agent`).
+
+2. **Check if that directory is already on the user's PATH.**
+   - **Windows:** `[Environment]::GetEnvironmentVariable("Path","User")` via PowerShell, then split on `;` and compare. (Don't use `$env:PATH` — that's the current process PATH, which may include parent process inheritance. The User-scope env is what `setx`/SetEnvironmentVariable actually persists.)
+   - **Unix:** `echo "$PATH" | tr ':' '\n' | grep -Fxq "<dir>"` — exit 0 means present.
+
+3. **If the directory IS already on PATH**, skip — report `✓ <cli>: binary already on PATH`.
+
+4. **If NOT on PATH**, ask via `AskUserQuestion` with ONE button option:
+   - **Header text:** "The `<cli>` binary lives at `<full-path>` but is not on your PATH. Adding it lets you type `<bin-name>` directly from any terminal. Skip if you don't want your environment modified."
+   - **Button option:** "Skip — leave PATH alone"
+   - User clicks Skip OR types anything else (treat any non-skip response as consent).
+
+5. **On consent, do the platform-appropriate edit, idempotent:**
+
+   **Windows (per-user, no admin):**
+   ```powershell
+   $current = [Environment]::GetEnvironmentVariable('Path','User')
+   $dirs = $current -split ';' | Where-Object { $_ -ne '' }
+   if ($dirs -notcontains '<DIR>') {
+     $new = ($dirs + '<DIR>') -join ';'
+     [Environment]::SetEnvironmentVariable('Path', $new, 'User')
+   }
+   ```
+   Use `[Environment]::SetEnvironmentVariable`, NOT the legacy `setx` command — `setx` truncates PATH at 1024 chars on some Windows versions.
+
+   **Unix:** detect the user's shell first, then append a guarded line to the matching RC file:
+   - Bash: `~/.bashrc` (Linux) or `~/.bash_profile` (macOS-ish)
+   - Zsh: `~/.zshrc`
+   - Fish: `~/.config/fish/config.fish`
+   - Detect via `$SHELL` env var. If unclear, ASK the user which shell they use rather than guessing.
+   
+   Append (only if not already present — `grep -Fq` first):
+   ```bash
+   # cc-multi-cli-plugin: added <cli> to PATH
+   export PATH="<DIR>:$PATH"
+   ```
+
+6. **Report exactly what was changed and how to revert:**
+
+   ```
+   ✓ <cli>: added <DIR> to PATH
+       Location of change: <Windows registry key | shell RC file>
+       To revert: <one-line instruction — registry edit on Windows, remove the lines on Unix>
+       Note: open a NEW terminal for the change to take effect; current shell is unaffected.
+   ```
+
+7. **Bash session inside Claude Code is also unaffected** by user-PATH changes you just made. Don't try to verify by running `<bin-name>` immediately afterward — it'll fail in the current process even though the persistent change is correct. Trust the registry/RC-file edit and move on.
+
+**Skip this entire step if `--dry-run` was passed.**
+
 ## Step 2 — Verify auth
 
 For each installed CLI, check auth:

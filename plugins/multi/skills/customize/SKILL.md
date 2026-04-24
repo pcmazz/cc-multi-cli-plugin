@@ -71,7 +71,7 @@ If the three sources disagree:
 
 ### Also check for CLI-specific facts
 
-- **Available slash commands and modes** (Cursor: `/plan`, `/ask`, `/debug`; Copilot: `/research`, `/review`; Gemini modes differ). Don't assume a capability exists because the name sounds plausible.
+- **Available slash commands and modes** — vary by CLI and by CLI version, and new ones land regularly. Do NOT guess or rely on memory. Verify via the three-source check above (CLI self-prompt + source constants + vendor docs). Each CLI has its own set — Cursor has a Debug mode that other CLIs don't; Copilot has many slash commands beyond the obvious ones; Gemini's modes differ again. Enumerate what actually exists before referencing one.
 - **Runtime flags** (sandbox modes, effort levels, read-only toggles) — check `--help` for exact spelling.
 - **Windows quirks** (`.cmd` shims, shell requirements, PATH differences).
 - **`plugins/multi/scripts/lib/adapters/<cli>.mjs`** is the source of truth for what flags our companion forwards.

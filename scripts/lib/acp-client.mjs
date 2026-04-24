@@ -264,7 +264,7 @@ function resolveCliBinary(command) {
 
 // ─── Direct (Spawned) Client ──────────────────────────────────────────────────
 
-class SpawnedAcpClient extends AcpClientBase {
+export class SpawnedAcpClient extends AcpClientBase {
   constructor(cwd, options = {}) {
     super(cwd, options);
     this.transport = "direct";

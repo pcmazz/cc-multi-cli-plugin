@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import * as codex from "./lib/adapters/codex.mjs";
 import * as gemini from "./lib/adapters/gemini.mjs";
+import * as cursor from "./lib/adapters/cursor.mjs";
 import {
     buildPersistentTaskThreadName,
     DEFAULT_CONTINUE_PROMPT,
@@ -69,6 +70,7 @@ import {
 const ADAPTERS = {
   codex,
   gemini,
+  cursor,
 };
 
 function getAdapter(name) {
@@ -551,6 +553,74 @@ async function executeTaskRun(request) {
     };
   }
 
+  // ── Cursor dispatch path ────────────────────────────────────────────────────
+  // When --cli cursor is used, invoke Cursor ACP (`agent acp`).
+  // The role (writer/planner/debugger/ask) is forwarded so the adapter can
+  // prepend the appropriate slash-command prefix to the prompt.
+  if (cli === "cursor") {
+    const cursorAvail = cursor.adapter.isAvailable();
+    if (!cursorAvail.available) {
+      throw new Error(`Cursor agent CLI is not available: ${cursorAvail.detail ?? "agent not found"}. Install Cursor from https://cursor.com or set CURSOR_AGENT_PATH.`);
+    }
+
+    if (!request.prompt) {
+      throw new Error("Provide a prompt for Cursor tasks.");
+    }
+
+    const prompt = request.prompt.trim() || "";
+
+    const result = await cursor.adapter.invoke(workspaceRoot, prompt, {
+      model: request.model ?? undefined,
+      role: request.role ?? "writer",
+      onStream: request.onProgress
+        ? (event) => {
+            if (event.type === "message_chunk" && event.text) {
+              request.onProgress(event.text);
+            } else if (event.type === "phase") {
+              request.onProgress({ message: event.message, phase: event.message });
+            }
+          }
+        : undefined
+    });
+
+    const rawOutput = typeof result.text === "string" ? result.text : "";
+    const failureMessage = result.error instanceof Error ? result.error.message : result.error ? String(result.error) : "";
+    const exitStatus = result.error ? 1 : 0;
+
+    const rendered = renderTaskResult(
+      {
+        rawOutput,
+        failureMessage,
+        reasoningSummary: []
+      },
+      {
+        title: taskMetadata.title,
+        jobId: request.jobId ?? null,
+        write: Boolean(request.write)
+      }
+    );
+
+    const payload = {
+      status: exitStatus,
+      threadId: result.sessionId ?? null,
+      rawOutput,
+      touchedFiles: (result.fileChanges ?? []).map((fc) => fc.path),
+      reasoningSummary: []
+    };
+
+    return {
+      exitStatus,
+      threadId: result.sessionId ?? null,
+      turnId: null,
+      payload,
+      rendered,
+      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
+      jobTitle: taskMetadata.title,
+      jobClass: "task",
+      write: Boolean(request.write)
+    };
+  }
+
   // ── Codex dispatch path (default) ───────────────────────────────────────────
   ensureCodexAvailable(request.cwd);
 
@@ -632,7 +702,7 @@ function buildTaskRunMetadata({ prompt, resumeLast = false, cli = "codex" }) {
     };
   }
 
-  const cliLabel = cli === "gemini" ? "Gemini" : "Codex";
+  const cliLabel = cli === "gemini" ? "Gemini" : cli === "cursor" ? "Cursor" : "Codex";
   const title = resumeLast ? `${cliLabel} Resume` : `${cliLabel} Task`;
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
   return {
@@ -692,7 +762,7 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
   });
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId, cli }) {
+function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId, cli, role }) {
   return {
     cwd,
     model,
@@ -701,7 +771,8 @@ function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId
     write,
     resumeLast,
     jobId,
-    cli: cli ?? "codex"
+    cli: cli ?? "codex",
+    role: role ?? null
   };
 }
 
@@ -875,7 +946,8 @@ async function handleTask(argv, context = {}) {
       write,
       resumeLast,
       jobId: job.id,
-      cli
+      cli,
+      role: options.role ?? null
     });
     const { payload } = enqueueBackgroundTask(cwd, job, request);
     outputCommandResult(payload, renderQueuedTaskLaunch(payload, cli), options.json);
@@ -895,7 +967,8 @@ async function handleTask(argv, context = {}) {
         resumeLast,
         jobId: job.id,
         onProgress: progress,
-        cli
+        cli,
+        role: options.role ?? null
       }),
     { json: options.json }
   );

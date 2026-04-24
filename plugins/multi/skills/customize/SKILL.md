@@ -7,12 +7,24 @@ description: Rewire which CLI handles which role in cc-multi-cli-plugin. Use whe
 
 cc-multi-cli-plugin is a **multi-plugin marketplace** with one hub plugin (`multi`) and four CLI-specific thin plugins (`gemini`, `codex`, `cursor`, `copilot`). Customization is explicit file edits across those plugins. No runtime config layer.
 
+## Step 0 — Locate the plugin repo (BEFORE any edits)
+
+Before editing anything, determine WHICH files to edit. Three scenarios:
+
+1. **Check `claude plugin marketplace list`** — find the `installLocation` for `cc-multi-cli-plugin`.
+2. **Classify the install:**
+   - If `installLocation` is a local directory the user controls (e.g., `~/dev/cc-multi-cli-plugin`, `C:\Users\<name>\skill-gemini`, a git clone they own) — **edit those files directly.** Changes are live.
+   - If `installLocation` is under `~/.claude/plugins/marketplaces/cc-multi-cli-plugin/` and sourced from a GitHub repo the user does NOT own — **edits there will be overwritten** on the next `claude plugin marketplace update`. STOP and tell the user they need to fork the repo, clone their fork, and re-register that clone as the marketplace source. Then proceed with their clone.
+3. **Ask the user** if you can't tell which scenario applies, or if you need a path to their local clone.
+
+Record the path you'll edit as `$REPO`. All subsequent file paths in this skill are relative to `$REPO`.
+
 ## Safety first
 
 Before any edits, suggest the user commit the current state so changes are easy to revert:
 
 ```bash
-cd <path to marketplace repo> && git status && git add -A && git commit -m "checkpoint before customization"
+cd $REPO && git status && git add -A && git commit -m "checkpoint before customization"
 ```
 
 ## Marketplace file layout recap
@@ -37,6 +49,26 @@ cd <path to marketplace repo> && git status && git add -A && git commit -m "chec
 - Slash commands live in the CLI-specific plugin whose namespace they want (`/gemini:...` → `plugins/gemini/commands/`).
 - Subagents live in `plugins/multi/agents/` (so they can share the companion runtime).
 - Commands dispatch to subagents via the `Agent` tool with `subagent_type: "multi:<name>"`.
+
+## Current inventory (what ships with v2.0.0)
+
+**Subagents** (in `plugins/multi/agents/`):
+- `gemini-researcher` — read-only research via Gemini ACP
+- `codex-execute` — plan execution via Codex ASP
+- `cursor-writer` — bulk code writing via Cursor Agent mode
+- `cursor-planner` — approach design via Cursor Plan mode
+- `cursor-debugger` — hypothesis-driven debug via Cursor Debug mode
+- `copilot-researcher` — Copilot `/research` (GitHub + web)
+- `copilot-reviewer` — Copilot `/review` code review agent
+
+**Commands** (mapped to subagents via `multi:<name>`):
+- `plugins/gemini/commands/research.md` → `multi:gemini-researcher`
+- `plugins/codex/commands/execute.md` → `multi:codex-execute`
+- `plugins/cursor/commands/{write,plan,debug}.md` → `multi:cursor-{writer,planner,debugger}`
+- `plugins/copilot/commands/{research,review}.md` → `multi:copilot-{researcher,reviewer}`
+- `plugins/multi/commands/setup.md` → `/multi:setup` (direct, not a subagent)
+
+When creating new subagents or commands, copy from one of these as a template.
 
 ## Change types
 
@@ -104,27 +136,42 @@ Edit the mapping to change how a role's prompt gets prefixed. Only touch this fu
 - `plugins/multi/scripts/multi-cli-companion.mjs` (unless adding a new adapter — see the `multi-cli-anything` skill)
 - `plugins/multi/hooks/hooks.json` (unless adding a new hook)
 
-## Verify after edits
+## Verify after edits — what picks up how
 
-Reinstall the affected plugin(s):
+Different edit types require different refresh steps. Always **run `claude plugin validate $REPO` first** to catch JSON/schema errors before reinstalling.
 
-```bash
-claude plugin install <plugin>@cc-multi-cli-plugin --force
-```
+| Change type | What to do |
+|---|---|
+| New/edited command file (`plugins/<cli>/commands/*.md`) | `claude plugin install <cli>@cc-multi-cli-plugin --force` |
+| New/edited subagent (`plugins/multi/agents/*.md`) | `claude plugin install multi@cc-multi-cli-plugin --force` **AND restart Claude Code** (subagent definitions are cached at session start) |
+| Adapter / companion script (`plugins/multi/scripts/...`) | Nothing — the companion respawns on each invocation |
+| New plugin added to `marketplace.json` | `claude plugin marketplace update cc-multi-cli-plugin`, then `claude plugin install <new-plugin>@cc-multi-cli-plugin` |
+| Edits to `plugins/multi/hooks/hooks.json` | Reinstall multi + restart |
 
-Then run the affected command (e.g., `/gemini:write foo` if you swapped Gemini into the writer role). If output is coherent, the rewire worked.
+After the appropriate refresh, run the affected command (e.g., `/gemini:write foo` if you swapped Gemini into the writer role). If output is coherent, the rewire worked.
 
-Claude Code reads subagent definitions on startup. A simple `/plugin install --force` won't pick up new subagent files without restart. If auto-dispatch doesn't work after edits, restart Claude Code.
+Tell the user explicitly when a restart is needed — they may not realize it's required for subagent changes.
 
 ## Example walk-through: swap Gemini and Cursor roles
 
 User says: *"Make Gemini the bulk writer and Cursor the researcher."*
 
-1. Create `plugins/multi/agents/gemini-writer.md` (copy from `cursor-writer.md`, update `name`, description, and `--cli gemini --role writer`).
-2. Create `plugins/multi/agents/cursor-researcher.md` (copy from `gemini-researcher.md`, update similarly).
-3. Create `plugins/gemini/commands/write.md` (copy from `plugins/cursor/commands/write.md`, change dispatch target to `multi:gemini-writer`).
-4. Create `plugins/cursor/commands/research.md` (copy from `plugins/gemini/commands/research.md`, change dispatch target to `multi:cursor-researcher`).
-5. (Optional) Delete or `_disabled-`-rename the old `plugins/cursor/commands/write.md`, `plugins/gemini/commands/research.md`, and the matching subagents.
-6. Commit, then `claude plugin install gemini@... --force && claude plugin install cursor@... --force && claude plugin install multi@... --force`.
-7. Restart Claude Code.
-8. Verify `/gemini:write create /tmp/hello.py ...` and `/cursor:research latest React patterns ...` both work.
+1. **Locate repo.** `claude plugin marketplace list` → find `cc-multi-cli-plugin` installLocation. Confirm it's editable.
+2. **Checkpoint.** `cd $REPO && git add -A && git commit -m "checkpoint before customization"` (if there are pending changes).
+3. **Subagents** (in `plugins/multi/agents/`):
+   - Create `gemini-writer.md` (copy from `cursor-writer.md`, update `name:`, description, and `Bash` invocation to `--cli gemini --role writer`).
+   - Create `cursor-researcher.md` (copy from `gemini-researcher.md`, similar changes).
+4. **Commands** (slash-command entry points):
+   - Create `plugins/gemini/commands/write.md` (copy from `plugins/cursor/commands/write.md`, change `subagent_type` to `multi:gemini-writer`).
+   - Create `plugins/cursor/commands/research.md` (copy from `plugins/gemini/commands/research.md`, change `subagent_type` to `multi:cursor-researcher`).
+5. **(Optional) Remove the originals:** delete or `_disabled-`-rename `plugins/cursor/commands/write.md`, `plugins/gemini/commands/research.md`, and the old subagents.
+6. **Validate:** `claude plugin validate $REPO` — must pass.
+7. **Commit** the changes.
+8. **Refresh:**
+   - `claude plugin install gemini@cc-multi-cli-plugin --force`
+   - `claude plugin install cursor@cc-multi-cli-plugin --force`
+   - `claude plugin install multi@cc-multi-cli-plugin --force`
+9. **Restart Claude Code** (subagent definitions are cached at session start — the reinstalls above pick up command changes but not subagent changes).
+10. **Verify:** run `/gemini:write create /tmp/hello.py that prints "hi"` and `/cursor:research summarize package.json`. Both should return coherent output.
+
+Tell the user explicitly at step 9 that the restart is required.

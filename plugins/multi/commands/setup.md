@@ -66,6 +66,8 @@ For each detected CLI, check the current install state FIRST, then act:
 
 3. **If the directory IS already on PATH**, skip — report `✓ <cli>: binary already on PATH`.
 
+   **Note for Git Bash users on Windows:** `which <bin>` returns "no <bin>" even when the directory IS on PATH, because Git Bash's `which` doesn't try `.cmd` / `.exe` extensions. Don't use `which` as your authoritative check — split PATH and compare directories instead. The binary works fine from PowerShell, cmd.exe, and Git Bash (using `<bin>.cmd` explicitly).
+
 4. **If NOT on PATH**, ask via `AskUserQuestion` with ONE button option:
    - **Header text:** "The `<cli>` binary lives at `<full-path>` but is not on your PATH. Adding it lets you type `<bin-name>` directly from any terminal. Skip if you don't want your environment modified."
    - **Button option:** "Skip — leave PATH alone"

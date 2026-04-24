@@ -19,6 +19,30 @@ Before editing anything, determine WHICH files to edit. Three scenarios:
 
 Record the path you'll edit as `$REPO`. All subsequent file paths in this skill are relative to `$REPO`.
 
+## Step 0.5 — Research the CLI(s) involved (BEFORE touching files)
+
+If the user's request mentions a specific model, slash command, mode, or CLI-specific flag, **verify the exact names and capabilities before writing anything**. Do not ask the user to confirm model IDs or slash-command names that you could look up yourself.
+
+**What to extract:**
+
+- **Exact model identifiers** the CLI accepts (e.g., `gemini-3.1-pro` vs `gemini-3-pro-preview`, or `auto` if the CLI supports automatic selection). Getting this wrong produces a runtime 400 from the provider.
+- **Available slash commands and modes** (e.g., Cursor has `/plan`, `/ask`, `/debug`; Copilot has `/research`, `/review`; Gemini's modes are different). If the user's request implies a capability, confirm the CLI actually exposes it.
+- **Runtime flags** (sandbox modes, effort levels, read-only toggles) — what names does the CLI's `--help` actually use?
+- **Known quirks** that affect your change (Windows-specific behavior, authentication requirements, recent breaking changes).
+
+**How to look things up (in this order):**
+
+1. **Run the CLI directly** — fastest and authoritative:
+   - `gemini models` or `gemini --help | grep -i model`
+   - `codex --help`
+   - `"<path>/agent.cmd" models` or `cursor-agent --help`
+   - `copilot --help`
+2. **Use context7** (proactive: this covers Gemini CLI, Cursor CLI, Copilot CLI, and Codex docs directly — fetch with `resolve-library-id` → `query-docs`).
+3. **Use exa web search** for recent changelogs, forum posts, or community notes (always via the `exa` MCP server per the user's web-search policy).
+4. **Read `plugins/multi/scripts/lib/adapters/<cli>.mjs`** — the plugin's own adapter is the source of truth for what flags it forwards to the CLI.
+
+**Record findings inline in your response to the user** (so they can double-check), then proceed to file edits without asking for confirmation on verifiable facts.
+
 ## Safety first
 
 Before any edits, suggest the user commit the current state so changes are easy to revert:

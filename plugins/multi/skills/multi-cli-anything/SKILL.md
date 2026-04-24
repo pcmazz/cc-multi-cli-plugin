@@ -7,6 +7,27 @@ description: Add a new CLI provider to cc-multi-cli-plugin (beyond the built-in 
 
 cc-multi-cli-plugin is a **multi-plugin marketplace**. Adding a new CLI means adding a new plugin to the marketplace plus wiring a new adapter into the shared companion runtime in the `multi` plugin.
 
+## Step 0 — Research the CLI first
+
+Before writing any code, pull everything you need to know about the CLI so you don't have to guess or ask the user later. Extract:
+
+- **Install status and binary name** — is the user's machine set up? What's the exact command (`cursor-agent`? `agent`? `qwen`? `aider`?)
+- **Structured transport** — does it support ACP, ASP, or structured stdout? (See prerequisites below.)
+- **Exact model identifiers** the CLI accepts (or `auto` if offered). Hardcoding a wrong model string causes 400 errors at runtime.
+- **Available slash commands and modes** — e.g., `/research`, `/review`, `/plan`, `/debug`, `/ask`, or whatever the CLI exposes. These determine which roles you'll map to slash-command prefixes in `buildPrompt()`.
+- **Runtime flags** — sandbox, read-only, effort, background, resume — what does the CLI's `--help` actually use?
+- **Authentication mechanism** — env var, OAuth, device code, API key header, etc.
+- **Known quirks** (Windows shell requirements, PATH issues, version-specific behavior).
+
+**How to look things up (in this order):**
+
+1. **Run the CLI directly** — `<cli> --help`, `<cli> models`, `<cli> status`, `<cli> about`. Fastest and authoritative.
+2. **Use context7** — call `resolve-library-id` with the CLI's name, then `query-docs` for specific topics (ACP support, model list, slash commands).
+3. **Use exa web search** for recent changelogs, forum posts, and community notes (via the `exa` MCP server).
+4. **Check existing adapters** in `plugins/multi/scripts/lib/adapters/` as reference templates.
+
+Record findings in your response to the user (so they can double-check), then proceed without asking for confirmation on verifiable facts.
+
 ## Prerequisites — confirm the CLI speaks a structured transport
 
 Check in this order:

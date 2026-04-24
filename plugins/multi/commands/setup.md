@@ -48,18 +48,29 @@ For each installed CLI, check auth:
 
 If unauthenticated, give the exact login command and use `AskUserQuestion` to ask whether to pause for the user to log in or skip that CLI.
 
-## Step 3 — Ask for Exa API key (once)
+## Step 3 — Ask for API keys (Exa required, Context7 optional)
 
-Check `~/.claude/plugins/cc-multi-cli-plugin/config.json` for a stored `exaApiKey`:
+Check `~/.claude/plugins/cc-multi-cli-plugin/config.json` for stored keys. If the file already has both, skip. Otherwise, ask via `AskUserQuestion` for whichever is missing.
 
-1. If the file exists and has the key, skip.
-2. Otherwise, ask the user via `AskUserQuestion` for their Exa API key (direct them to https://dashboard.exa.ai if needed).
-3. Save the key to `~/.claude/plugins/cc-multi-cli-plugin/config.json` with mode 0600:
-   ```json
-   { "exaApiKey": "<key>" }
-   ```
+**Exa API key (required for web search):**
+- Exa MCP always needs a key to function.
+- Direct the user to https://dashboard.exa.ai if they don't have one.
 
-Create the directory with `Bash` if it doesn't exist.
+**Context7 API key (optional but recommended):**
+- Context7 works without a key for basic doc lookups.
+- With a key: higher rate limits + access to `researchMode` (sandboxed agents reading source repos + live web search for deeper synthesis).
+- Direct the user to https://context7.com for a free key.
+- If the user declines, skip the env block for Context7 (it'll still work at free-tier limits).
+
+**Save to config.json with mode 0600:**
+```json
+{
+  "exaApiKey": "<key>",
+  "context7ApiKey": "<key-or-empty-string>"
+}
+```
+
+Create the directory with `Bash` if it doesn't exist. Never print either key back to the user after capture — just confirm "saved."
 
 ## Step 4 — Configure MCPs per CLI
 
@@ -75,7 +86,9 @@ For each installed, authenticated CLI, do the following:
 
 3. **Merge the cc-multi-cli-plugin managed block** (see templates below).
 
-4. **Codex — TOML**: Append the managed block, wrapped in comment markers:
+4. **Codex — TOML**: Append the managed block, wrapped in comment markers. Include `CONTEXT7_API_KEY` in Context7's env ONLY if the user provided a Context7 key; otherwise omit the env line entirely (server still works at free-tier rate limits).
+
+   **With Context7 key:**
    ```toml
    # BEGIN cc-multi-cli-plugin managed block — do not edit by hand
    [mcp_servers.exa]
@@ -86,23 +99,43 @@ For each installed, authenticated CLI, do the following:
    [mcp_servers.context7]
    command = "npx"
    args = ["-y", "@upstash/context7-mcp"]
+   env = { CONTEXT7_API_KEY = "<CONTEXT7_KEY_FROM_CONFIG>" }
    # END cc-multi-cli-plugin managed block
    ```
 
-5. **Gemini / Cursor / Copilot — JSON**: Merge these two servers into `mcpServers`. Include a `_cc_multi_managed: true` marker key in each so they can be found later:
+   **Without Context7 key:** drop the `env = { ... }` line from the Context7 block.
+
+5. **Gemini / Cursor / Copilot — JSON**: Merge these two servers into `mcpServers`. Include a `_cc_multi_managed: true` marker key in each. Include Context7's `env` block ONLY if the user provided a key.
+
+   **Exa** (always includes its env block — required):
    ```json
    "exa": {
      "command": "npx",
      "args": ["-y", "@exa/mcp-server-exa"],
      "env": { "EXA_API_KEY": "<EXA_KEY_FROM_CONFIG>" },
      "_cc_multi_managed": true
-   },
+   }
+   ```
+
+   **Context7 with key:**
+   ```json
+   "context7": {
+     "command": "npx",
+     "args": ["-y", "@upstash/context7-mcp"],
+     "env": { "CONTEXT7_API_KEY": "<CONTEXT7_KEY_FROM_CONFIG>" },
+     "_cc_multi_managed": true
+   }
+   ```
+
+   **Context7 without key** (omit the `env` object):
+   ```json
    "context7": {
      "command": "npx",
      "args": ["-y", "@upstash/context7-mcp"],
      "_cc_multi_managed": true
    }
    ```
+
    If the user already has an `exa` or `context7` server under a different configuration, do NOT overwrite — instead, report the conflict and ask via `AskUserQuestion` whether to replace or keep theirs.
 
 6. Use `Read` to pull the file, `Edit`/`Write` to apply changes. Preserve the user's other keys and structure.

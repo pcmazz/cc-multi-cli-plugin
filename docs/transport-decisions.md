@@ -2,16 +2,14 @@
 
 ## Cursor (Phase D, 2026-04-24)
 
-- Checked: `cursor-agent --help` for ACP flag
-- Native ACP flag found: no — `cursor-agent` is not a standalone CLI binary on PATH.
-  The command `cursor-agent --help` returned "command not found" in both environments
-  checked (PATH search and direct invocation). Cursor ships its agent as a VS Code
-  extension (`cursor-agent-exec`) embedded in the Cursor install, not as a spawnable
-  CLI process. No `--acp`, `--mode`, or `-p` flags are available because there is no
-  standalone `cursor-agent` binary. The `cursor` binary at
-  `/c/LabSoftware/cursor/resources/app/bin/cursor` is the IDE launcher, not an agent CLI.
-- Decision: NEEDS_CONTEXT — cannot invoke `cursor-agent --acp` directly via
-  SpawnedAcpClient; no subprocess `-p` flag available either.
-- Rationale: Without a standalone `cursor-agent` binary that accepts ACP or prompt flags,
-  the plan's assumption of native ACP does not hold on this machine; the correct transport
-  (npm shim, REST API, or other mechanism) needs to be determined before implementation.
+- Cursor CLI supports ACP via `agent acp` subcommand (NOT a `--acp` flag — easy to miss in `--help`).
+- Confirmed working on Windows with JSON-RPC initialize handshake.
+- Transport: shared `scripts/lib/acp-client.mjs` used for both Gemini and Cursor.
+- Slash commands (e.g. `/debug`) are passed as the prompt text via the ACP `prompt` method.
+
+## Windows spawn fix (Phase D, 2026-04-24)
+
+- Both Cursor and Gemini CLIs on Windows are `.cmd` files (from npm global install or Cursor's installer).
+- `spawn(cliName, [...args])` fails with EINVAL on Windows when `cliName` resolves to a `.cmd`.
+- Fix: `spawn('"<absolute-forward-slash-path>" <args>', { shell: true })` — single command string, `shell: true`.
+- Path resolution: use `process.env.PATH` + a small helper to find `.cmd` / `.exe` variants, OR hardcode-via-config, OR let the user set an env var for the CLI path.

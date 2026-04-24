@@ -1,40 +1,47 @@
-# skill-gemini
+# cc-multi-cli-plugin
 
-A Claude Code plugin that lets you consult Gemini CLI as a read-only thinker for second opinions, research, and alternative perspectives.
+A Claude Code plugin that lets Claude delegate work to **four external AI CLIs** — Codex, Gemini, Cursor, and GitHub Copilot — as first-class subagents and slash commands. Each CLI is reached via its native structured protocol (ASP, ACP, or JSON-RPC SDK), so sessions, streaming, tool calls, and background jobs all work.
 
-## Prerequisites
+> **v2.0.0** — This plugin replaces the former `skill-gemini`. See [CHANGELOG.md](CHANGELOG.md) for migration notes.
 
-- [Gemini CLI](https://geminicli.com) installed and authenticated
-- [Claude Code](https://claude.com/claude-code) installed
+## Install in one paste
 
-## Install
+Paste this into Claude Code:
 
-Add this marketplace to Claude Code:
+> Install `cc-multi-cli-plugin` from github.com/greenpolo/cc-multi-cli-plugin, then run `/multi:setup` to configure all four CLIs with Exa + Context7 MCPs.
 
+Claude runs `/plugin marketplace add`, `/plugin install cc-multi-cli-plugin`, and `/multi:setup` for you.
+
+## Manual install
+
+```bash
+/plugin marketplace add https://github.com/greenpolo/cc-multi-cli-plugin
+/plugin install cc-multi-cli-plugin
+/multi:setup
 ```
-/plugin marketplace add <your-github-username>/skill-gemini
-```
 
-Then install the plugin:
+## Commands
 
-```
-/plugin install skill-gemini
-```
+| Command | What it does |
+|---|---|
+| `/multi:setup` | Setup wizard — detects CLIs, configures MCPs |
+| `/gemini:research` | Deep research with Gemini's 1M context |
+| `/codex:execute` | Delegate a plan step to Codex |
+| `/cursor:write` | Bulk code writing (Cursor Agent mode) |
+| `/cursor:plan` | Design an approach (Cursor Plan mode) |
+| `/cursor:debug` | Root-cause debugging (Cursor Debug mode) |
+| `/copilot:research` | GitHub + web investigation (Copilot `/research`) |
+| `/copilot:review` | Copilot code review agent |
 
-## Usage
+Claude also auto-dispatches to four subagents when appropriate: `gemini-researcher`, `codex-execute`, `cursor-writer`, `cursor-debugger`.
 
-Ask Claude to consult Gemini on anything:
+## Customize
 
-- "Ask Gemini what it thinks about this approach"
-- "Get a second opinion from Gemini on this architecture"
-- "Have Gemini research X for me"
+Ask Claude to customize which CLI handles which role. The plugin ships a `customize` skill that walks Claude through the file edits.
 
-The skill uses `gemini-3.1-pro-preview` by default. Request a different model explicitly if needed.
-
-## How it works
-
-The skill runs Gemini CLI in headless mode (`gemini -p "prompt"`), captures the response, and presents it with Claude's own critical evaluation. If Claude spots a clear misunderstanding in Gemini's response, it will automatically follow up for clarification. For subjective disagreements, both perspectives are presented for you to decide.
+Example:
+> Swap Gemini and Cursor roles — make Gemini the bulk writer and Cursor the researcher.
 
 ## License
 
-MIT
+Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for upstream attributions.

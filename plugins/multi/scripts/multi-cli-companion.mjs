@@ -1015,7 +1015,7 @@ async function handleTask(argv, context = {}) {
   if (resumeLast && fresh) {
     throw new Error("Choose either --resume/--resume-last or --fresh.");
   }
-  // --read-only (from gemini-researcher subagent) maps to write: false
+  // --read-only (from gemini-researcher / gemini-explorer subagents) maps to write: false
   const write = Boolean(options.write) && !Boolean(options["read-only"]);
   const taskMetadata = buildTaskRunMetadata({
     prompt,

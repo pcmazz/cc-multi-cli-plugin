@@ -18,7 +18,7 @@
     },
     {
       "name": "gemini",
-      "description": "Adds /gemini:research. Requires multi.",
+      "description": "Adds /gemini:explore (Gemini 3 Flash, fast code ingestion) and /gemini:research (Gemini 3.1 Pro, deep external research). Requires multi.",
       "version": "2.0.0",
       "author": { "name": "greenpolo" },
       "source": "./plugins/gemini"

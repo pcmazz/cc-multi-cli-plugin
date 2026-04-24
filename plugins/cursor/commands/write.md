@@ -4,7 +4,7 @@ argument-hint: "[--background|--wait] [--resume|--fresh] [--model <model>] <what
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
 
-Dispatch to the `cc-multi-cli-plugin:cursor-writer` subagent. Cursor writes code in Agent mode with full tool access.
+Dispatch to the `multi:cursor-writer` subagent. Cursor writes code in Agent mode with full tool access.
 
 Raw user request:
 $ARGUMENTS

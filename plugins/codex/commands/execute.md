@@ -4,7 +4,7 @@ argument-hint: "[--background|--wait] [--resume|--fresh] [--model <model>] [--ef
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
 
-Invoke the `cc-multi-cli-plugin:codex-execute` subagent via the `Agent` tool, forwarding the user's request as the prompt.
+Invoke the `multi:codex-execute` subagent via the `Agent` tool, forwarding the user's request as the prompt.
 
 The subagent runs Codex in structured-execution mode — give it a concrete plan step, it implements it.
 

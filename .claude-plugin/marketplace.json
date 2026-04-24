@@ -5,18 +5,44 @@
     "url": "https://github.com/greenpolo"
   },
   "metadata": {
-    "description": "Marketplace for cc-multi-cli-plugin — Claude Code delegation to Codex, Gemini, Cursor, and GitHub Copilot CLIs via native protocols.",
+    "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Gemini, Cursor, and GitHub Copilot CLIs from Claude Code.",
     "version": "2.0.0"
   },
   "plugins": [
     {
-      "name": "cc-multi-cli-plugin",
-      "description": "Delegate work from Claude Code to Codex, Gemini, Cursor, and GitHub Copilot CLIs via native structured protocols.",
+      "name": "multi",
+      "description": "Hub — companion runtime, subagents, setup wizard, customization skills. Install first.",
       "version": "2.0.0",
-      "author": {
-        "name": "greenpolo"
-      },
-      "source": "./plugins/cc-multi-cli-plugin"
+      "author": { "name": "greenpolo" },
+      "source": "./plugins/multi"
+    },
+    {
+      "name": "gemini",
+      "description": "Adds /gemini:research. Requires multi.",
+      "version": "2.0.0",
+      "author": { "name": "greenpolo" },
+      "source": "./plugins/gemini"
+    },
+    {
+      "name": "codex",
+      "description": "Adds /codex:execute. Requires multi.",
+      "version": "2.0.0",
+      "author": { "name": "greenpolo" },
+      "source": "./plugins/codex"
+    },
+    {
+      "name": "cursor",
+      "description": "Adds /cursor:write, /cursor:plan, /cursor:debug. Requires multi.",
+      "version": "2.0.0",
+      "author": { "name": "greenpolo" },
+      "source": "./plugins/cursor"
+    },
+    {
+      "name": "copilot",
+      "description": "Adds /copilot:research, /copilot:review. Requires multi.",
+      "version": "2.0.0",
+      "author": { "name": "greenpolo" },
+      "source": "./plugins/copilot"
     }
   ]
 }

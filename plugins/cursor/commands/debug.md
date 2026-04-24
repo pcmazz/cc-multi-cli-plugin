@@ -4,7 +4,7 @@ argument-hint: "[--background|--wait] [--resume|--fresh] [--model <model>] <desc
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
 
-Dispatch to the `cc-multi-cli-plugin:cursor-debugger` subagent. Cursor enters Debug mode — generates hypotheses, adds log statements, uses runtime information to pinpoint the issue before making a targeted fix.
+Dispatch to the `multi:cursor-debugger` subagent. Cursor enters Debug mode — generates hypotheses, adds log statements, uses runtime information to pinpoint the issue before making a targeted fix.
 
 Raw user request:
 $ARGUMENTS

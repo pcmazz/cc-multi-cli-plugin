@@ -26,6 +26,17 @@ Tabulate which succeed. For each failure, tell the user the install command:
 
 Continue only with the CLIs that are installed. Do not block on missing ones.
 
+## Step 1.5 — Offer to install the CLI-specific plugins
+
+For each detected CLI, use `AskUserQuestion` to ask whether to install the matching sub-plugin. Run:
+
+- Gemini detected → `claude plugin install gemini@cc-multi-cli-plugin` (adds `/gemini:research`)
+- Codex detected → `claude plugin install codex@cc-multi-cli-plugin` (adds `/codex:execute`)
+- Cursor detected → `claude plugin install cursor@cc-multi-cli-plugin` (adds `/cursor:write`, `/cursor:plan`, `/cursor:debug`)
+- Copilot detected → `claude plugin install copilot@cc-multi-cli-plugin` (adds `/copilot:research`, `/copilot:review`)
+
+Skip CLIs the user declines. Report any install failures via Bash stderr but continue. Users can install later by re-running this command or running `claude plugin install <name>@cc-multi-cli-plugin` manually.
+
 ## Step 2 — Verify auth
 
 For each installed CLI, check auth:

@@ -4,7 +4,7 @@ argument-hint: "[--background|--wait] [--resume|--fresh] [--model <model>] <what
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
 
-Dispatch the user's research request to the `cc-multi-cli-plugin:gemini-researcher` subagent via the `Agent` tool. Gemini uses its 1M-token context and tool access to investigate codebase or external topics and returns a structured summary.
+Dispatch the user's research request to the `multi:gemini-researcher` subagent via the `Agent` tool. Gemini uses its 1M-token context and tool access to investigate codebase or external topics and returns a structured summary.
 
 Raw user request:
 $ARGUMENTS

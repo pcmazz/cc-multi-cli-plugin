@@ -13,7 +13,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import process from "node:process";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import readline from "node:readline";
 import { parseBrokerEndpoint } from "./broker-endpoint.mjs";
 import { ensureBrokerSession, loadBrokerSession } from "./gemini-broker-lifecycle.mjs";
@@ -231,6 +231,37 @@ class AcpClientBase {
   }
 }
 
+// ─── Windows-safe CLI binary resolver ─────────────────────────────────────────
+//
+// On Windows, CLIs installed via npm global install (or Cursor's own installer)
+// arrive as `.cmd` wrapper files. Node's spawn() with an array of args will fail
+// with EINVAL when the target resolves to a .cmd. The fix is to build a single
+// command string and pass `shell: true` so cmd.exe interprets it correctly.
+//
+// resolveCliBinary converts any binary name (or absolute path) into an absolute
+// forward-slash path that is safe to embed in a shell command string.
+
+function resolveCliBinary(command) {
+  // If the caller already provided a path (absolute or relative with separators),
+  // just normalise backslashes to forward slashes.
+  if (command.includes("/") || command.includes("\\")) {
+    return command.replace(/\\/g, "/");
+  }
+  // On non-Windows, trust the shell to resolve via PATH.
+  if (process.platform !== "win32") {
+    return command;
+  }
+  // On Windows, use `where` to locate the first match (.cmd / .exe / .bat).
+  try {
+    const found = execSync(`where ${command}`, { encoding: "utf8" })
+      .split(/\r?\n/)
+      .filter(Boolean)[0];
+    return found ? found.replace(/\\/g, "/") : command;
+  } catch {
+    return command;
+  }
+}
+
 // ─── Direct (Spawned) Client ──────────────────────────────────────────────────
 
 class SpawnedAcpClient extends AcpClientBase {
@@ -240,17 +271,24 @@ class SpawnedAcpClient extends AcpClientBase {
   }
 
   async initialize() {
-    this.proc = spawn("gemini", ["--acp"], {
+    // Build a Windows-safe command string. Using shell: true with a single
+    // quoted-path command string avoids EINVAL failures when the CLI is a
+    // .cmd wrapper (common for npm global installs and Cursor on Windows).
+    const command = resolveCliBinary(this.options.command ?? "gemini");
+    const args = this.options.args ?? ["--acp"];
+    const cmdStr = `"${command}" ${args.join(" ")}`;
+    this.proc = spawn(cmdStr, {
       cwd: this.cwd,
       env: this.options.env ?? process.env,
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: true
     });
 
     const rl = readline.createInterface({ input: this.proc.stdout });
     rl.on("line", (line) => this.handleLine(line));
 
     this.proc.on("exit", (code) => {
-      this.handleExit(code !== 0 ? new Error(`gemini --acp exited with code ${code}`) : null);
+      this.handleExit(code !== 0 ? new Error(`${cmdStr} exited with code ${code}`) : null);
     });
 
     this.proc.on("error", (error) => {
@@ -303,7 +341,7 @@ class SpawnedAcpClient extends AcpClientBase {
     const line = `${JSON.stringify(message)}\n`;
     const stdin = this.proc?.stdin;
     if (!stdin) {
-      throw new Error("gemini --acp stdin is not available.");
+      throw new Error("ACP child process stdin is not available.");
     }
     stdin.write(line);
   }

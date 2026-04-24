@@ -69,6 +69,7 @@ function buildPrompt(role, userTask) {
   const prefix = {
     researcher: "/research ",
     reviewer: "/review ",
+    planner: "/plan ",
   }[role] ?? "";
   return prefix + userTask;
 }

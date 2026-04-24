@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import * as codex from "./lib/adapters/codex.mjs";
+import * as gemini from "./lib/adapters/gemini.mjs";
 import {
     buildPersistentTaskThreadName,
     DEFAULT_CONTINUE_PROMPT,
@@ -67,6 +68,7 @@ import {
 // ('codex', 'gemini', 'cursor', 'copilot'). New adapters are added in later phases.
 const ADAPTERS = {
   codex,
+  gemini,
 };
 
 function getAdapter(name) {
@@ -472,12 +474,84 @@ async function executeReviewRun(request) {
 
 async function executeTaskRun(request) {
   const workspaceRoot = resolveWorkspaceRoot(request.cwd);
-  ensureCodexAvailable(request.cwd);
+  const cli = request.cli ?? "codex";
 
   const taskMetadata = buildTaskRunMetadata({
     prompt: request.prompt,
     resumeLast: request.resumeLast
   });
+
+  // ── Gemini dispatch path ────────────────────────────────────────────────────
+  // When --cli gemini is used, invoke Gemini ACP instead of the Codex app-server.
+  // Gemini does not currently support thread/session resumption in the same way
+  // as Codex; --resume-last is accepted but falls back to a fresh prompt.
+  if (cli === "gemini") {
+    const geminiAvail = gemini.adapter.isAvailable();
+    if (!geminiAvail.available) {
+      throw new Error(`Gemini CLI is not available: ${geminiAvail.detail ?? "gemini not found on PATH"}. Install with: npm install -g @google/gemini-cli`);
+    }
+
+    if (!request.prompt) {
+      throw new Error("Provide a prompt, a prompt file, or piped stdin for Gemini tasks.");
+    }
+
+    const prompt = request.prompt.trim() || "";
+    const approvalMode = request.write ? "auto_edit" : "plan";
+
+    const result = await gemini.adapter.invoke(workspaceRoot, prompt, {
+      model: request.model ?? undefined,
+      approvalMode,
+      onStream: request.onProgress
+        ? (event) => {
+            if (event.type === "message_chunk" && event.text) {
+              request.onProgress(event.text);
+            } else if (event.type === "phase") {
+              request.onProgress({ message: event.message, phase: event.message });
+            }
+          }
+        : undefined
+    });
+
+    const rawOutput = typeof result.text === "string" ? result.text : "";
+    const failureMessage = result.error instanceof Error ? result.error.message : result.error ? String(result.error) : "";
+    const exitStatus = result.error ? 1 : 0;
+
+    const rendered = renderTaskResult(
+      {
+        rawOutput,
+        failureMessage,
+        reasoningSummary: []
+      },
+      {
+        title: taskMetadata.title,
+        jobId: request.jobId ?? null,
+        write: Boolean(request.write)
+      }
+    );
+
+    const payload = {
+      status: exitStatus,
+      threadId: result.sessionId ?? null,
+      rawOutput,
+      touchedFiles: (result.fileChanges ?? []).map((fc) => fc.path),
+      reasoningSummary: []
+    };
+
+    return {
+      exitStatus,
+      threadId: result.sessionId ?? null,
+      turnId: null,
+      payload,
+      rendered,
+      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
+      jobTitle: taskMetadata.title,
+      jobClass: "task",
+      write: Boolean(request.write)
+    };
+  }
+
+  // ── Codex dispatch path (default) ───────────────────────────────────────────
+  ensureCodexAvailable(request.cwd);
 
   let resumeThreadId = null;
   if (request.resumeLast) {
@@ -613,7 +687,7 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
   });
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId }) {
+function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId, cli }) {
   return {
     cwd,
     model,
@@ -621,7 +695,8 @@ function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId
     prompt,
     write,
     resumeLast,
-    jobId
+    jobId,
+    cli: cli ?? "codex"
   };
 }
 
@@ -744,15 +819,16 @@ async function handleReview(argv) {
   });
 }
 
-async function handleTask(argv) {
+async function handleTask(argv, context = {}) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["model", "effort", "cwd", "prompt-file", "role"],
-    booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background"],
+    booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background", "read-only"],
     aliasMap: {
       m: "model"
     }
   });
 
+  const cli = context.cli ?? "codex";
   const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
   const model = normalizeRequestedModel(options.model);
@@ -764,14 +840,24 @@ async function handleTask(argv) {
   if (resumeLast && fresh) {
     throw new Error("Choose either --resume/--resume-last or --fresh.");
   }
-  const write = Boolean(options.write);
+  // --read-only (from gemini-researcher subagent) maps to write: false
+  const write = Boolean(options.write) && !Boolean(options["read-only"]);
   const taskMetadata = buildTaskRunMetadata({
     prompt,
     resumeLast
   });
 
   if (options.background) {
-    ensureCodexAvailable(cwd);
+    if (cli === "codex") {
+      ensureCodexAvailable(cwd);
+    } else {
+      // For non-codex CLIs, check binary availability via the adapter registry.
+      const adapterMod = getAdapter(cli);
+      const avail = (adapterMod.adapter ?? adapterMod).isAvailable?.();
+      if (avail && !avail.available) {
+        throw new Error(`${cli} CLI is not available: ${avail.detail}`);
+      }
+    }
     requireTaskRequest(prompt, resumeLast);
 
     const job = buildTaskJob(workspaceRoot, taskMetadata, write);
@@ -782,7 +868,8 @@ async function handleTask(argv) {
       prompt,
       write,
       resumeLast,
-      jobId: job.id
+      jobId: job.id,
+      cli
     });
     const { payload } = enqueueBackgroundTask(cwd, job, request);
     outputCommandResult(payload, renderQueuedTaskLaunch(payload), options.json);
@@ -801,7 +888,8 @@ async function handleTask(argv) {
         write,
         resumeLast,
         jobId: job.id,
-        onProgress: progress
+        onProgress: progress,
+        cli
       }),
     { json: options.json }
   );
@@ -1025,7 +1113,7 @@ async function main() {
       });
       break;
     case "task":
-      await handleTask(argv);
+      await handleTask(argv, { cli: cliName });
       break;
     case "task-worker":
       await handleTaskWorker(argv);

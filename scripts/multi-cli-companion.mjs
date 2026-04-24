@@ -10,6 +10,7 @@ import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import * as codex from "./lib/adapters/codex.mjs";
 import * as gemini from "./lib/adapters/gemini.mjs";
 import * as cursor from "./lib/adapters/cursor.mjs";
+import * as copilot from "./lib/adapters/copilot.mjs";
 import {
     buildPersistentTaskThreadName,
     DEFAULT_CONTINUE_PROMPT,
@@ -71,6 +72,7 @@ const ADAPTERS = {
   codex,
   gemini,
   cursor,
+  copilot,
 };
 
 function getAdapter(name) {
@@ -621,6 +623,74 @@ async function executeTaskRun(request) {
     };
   }
 
+  // ── Copilot dispatch path ────────────────────────────────────────────────────
+  // When --cli copilot is used, invoke GitHub Copilot ACP (`copilot --acp --stdio`).
+  // The role (researcher/reviewer) is forwarded so the adapter can prepend the
+  // appropriate slash-command prefix (/research, /review) to the prompt.
+  if (cli === "copilot") {
+    const copilotAvail = copilot.adapter.isAvailable();
+    if (!copilotAvail.available) {
+      throw new Error(`GitHub Copilot CLI is not available: ${copilotAvail.detail ?? "copilot not found"}. Install with: npm install -g @github/copilot`);
+    }
+
+    if (!request.prompt) {
+      throw new Error("Provide a prompt for Copilot tasks.");
+    }
+
+    const prompt = request.prompt.trim() || "";
+
+    const result = await copilot.adapter.invoke(workspaceRoot, prompt, {
+      model: request.model ?? undefined,
+      role: request.role ?? "default",
+      onStream: request.onProgress
+        ? (event) => {
+            if (event.type === "message_chunk" && event.text) {
+              request.onProgress(event.text);
+            } else if (event.type === "phase") {
+              request.onProgress({ message: event.message, phase: event.message });
+            }
+          }
+        : undefined
+    });
+
+    const rawOutput = typeof result.text === "string" ? result.text : "";
+    const failureMessage = result.error instanceof Error ? result.error.message : result.error ? String(result.error) : "";
+    const exitStatus = result.error ? 1 : 0;
+
+    const rendered = renderTaskResult(
+      {
+        rawOutput,
+        failureMessage,
+        reasoningSummary: []
+      },
+      {
+        title: taskMetadata.title,
+        jobId: request.jobId ?? null,
+        write: Boolean(request.write)
+      }
+    );
+
+    const payload = {
+      status: exitStatus,
+      threadId: result.sessionId ?? null,
+      rawOutput,
+      touchedFiles: (result.fileChanges ?? []).map((fc) => fc.path),
+      reasoningSummary: []
+    };
+
+    return {
+      exitStatus,
+      threadId: result.sessionId ?? null,
+      turnId: null,
+      payload,
+      rendered,
+      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
+      jobTitle: taskMetadata.title,
+      jobClass: "task",
+      write: Boolean(request.write)
+    };
+  }
+
   // ── Codex dispatch path (default) ───────────────────────────────────────────
   ensureCodexAvailable(request.cwd);
 
@@ -702,7 +772,10 @@ function buildTaskRunMetadata({ prompt, resumeLast = false, cli = "codex" }) {
     };
   }
 
-  const cliLabel = cli === "gemini" ? "Gemini" : cli === "cursor" ? "Cursor" : "Codex";
+  const cliLabel = cli === "gemini" ? "Gemini"
+                 : cli === "cursor" ? "Cursor"
+                 : cli === "copilot" ? "Copilot"
+                 : "Codex";
   const title = resumeLast ? `${cliLabel} Resume` : `${cliLabel} Task`;
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
   return {

@@ -227,42 +227,63 @@ Edit the mapping to change how a role's prompt gets prefixed. Only touch this fu
 - `plugins/multi/scripts/multi-cli-companion.mjs` (unless adding a new adapter — see the `multi-cli-anything` skill)
 - `plugins/multi/hooks/hooks.json` (unless adding a new hook)
 
-## Verify after edits — what picks up how
+## Verify after edits — YOU (Claude) run the refresh, not the user
 
-Different edit types require different refresh steps. Always **run `claude plugin validate $REPO` first** to catch JSON/schema errors before reinstalling.
+Different edit types require different refresh steps. **You execute the refresh commands yourself via Bash** — do not hand the install commands to the user to type. The only thing you can't do is restart Claude Code itself; flag that explicitly when it's needed.
 
-| Change type | What to do |
-|---|---|
-| New/edited command file (`plugins/<cli>/commands/*.md`) | `claude plugin install <cli>@cc-multi-cli-plugin --force` |
-| New/edited subagent (`plugins/multi/agents/*.md`) | `claude plugin install multi@cc-multi-cli-plugin --force` **AND restart Claude Code** (subagent definitions are cached at session start) |
-| Adapter / companion script (`plugins/multi/scripts/...`) | Nothing — the companion respawns on each invocation |
-| New plugin added to `marketplace.json` | `claude plugin marketplace update cc-multi-cli-plugin`, then `claude plugin install <new-plugin>@cc-multi-cli-plugin` |
-| Edits to `plugins/multi/hooks/hooks.json` | Reinstall multi + restart |
+**Always run first:**
 
-After the appropriate refresh, run the affected command (e.g., `/gemini:write foo` if you swapped Gemini into the writer role). If output is coherent, the rewire worked.
+```bash
+claude plugin validate $REPO
+```
 
-Tell the user explicitly when a restart is needed — they may not realize it's required for subagent changes.
+This catches JSON/schema errors before any reinstall. If it fails, fix the errors and re-run before proceeding.
 
-## Example walk-through: swap Gemini and Cursor roles
+**Then refresh based on what you touched:**
+
+| What you edited | What you run via Bash | User action required? |
+|---|---|---|
+| Command file (`plugins/<cli>/commands/*.md`) | `claude plugin install <cli>@cc-multi-cli-plugin --force` | None — command changes are live after reinstall |
+| Subagent (`plugins/multi/agents/*.md`) | `claude plugin install multi@cc-multi-cli-plugin --force` | **Yes — user must restart Claude Code.** Subagent definitions are cached at session start; reinstall alone doesn't reload them. |
+| Adapter / companion script (`plugins/multi/scripts/...`) | Nothing — the companion respawns on each invocation | None |
+| New plugin added to `marketplace.json` | `claude plugin marketplace update cc-multi-cli-plugin` then `claude plugin install <new-plugin>@cc-multi-cli-plugin` | None for the new plugin itself; but if the new plugin has subagents, restart IS required |
+| `plugins/multi/hooks/hooks.json` | `claude plugin install multi@cc-multi-cli-plugin --force` | **Yes — restart** |
+
+**Workflow Claude follows end-to-end:**
+
+1. Research the CLI strings (Step 0.5), locate `$REPO` (Step 0), offer a safety checkpoint commit.
+2. Make file edits.
+3. Run `claude plugin validate $REPO` via Bash.
+4. Run the relevant `claude plugin install ... --force` commands via Bash (one per affected plugin).
+5. Commit the changes via Bash (`cd $REPO && git add -A && git commit -m "customize: <summary>"`).
+6. Tell the user what you did. If any subagent files changed or hooks changed, end with a clear restart prompt: *"The changes include subagent edits, so please restart Claude Code to pick them up. After restart, try `/<cli>:<command> <test prompt>` to verify."* Otherwise, give them a test command they can run right now without a restart.
+
+Claude restart itself is the ONE thing you can't do — don't pretend you can. But reinstalling, validating, and committing are all yours.
+
+## Example walk-through: swap Gemini and Cursor roles (Claude runs everything)
 
 User says: *"Make Gemini the bulk writer and Cursor the researcher."*
 
-1. **Locate repo.** `claude plugin marketplace list` → find `cc-multi-cli-plugin` installLocation. Confirm it's editable.
-2. **Checkpoint.** `cd $REPO && git add -A && git commit -m "checkpoint before customization"` (if there are pending changes).
-3. **Subagents** (in `plugins/multi/agents/`):
+Claude:
+
+1. **Locate the repo.** Run `claude plugin marketplace list` via Bash → find `cc-multi-cli-plugin` `installLocation`. Confirm it's editable (scenario 1 or 3 from Step 0).
+2. **Verify CLI strings (Step 0.5).** If the user mentioned specific models/modes (they didn't in this example), look them up. Skip if no specifics.
+3. **Safety checkpoint** via Bash: `cd $REPO && git status && git add -A && git commit -m "checkpoint before customization"` (if working tree had uncommitted changes).
+4. **Edit subagents** in `plugins/multi/agents/`:
    - Create `gemini-writer.md` (copy from `cursor-writer.md`, update `name:`, description, and `Bash` invocation to `--cli gemini --role writer`).
    - Create `cursor-researcher.md` (copy from `gemini-researcher.md`, similar changes).
-4. **Commands** (slash-command entry points):
+5. **Edit commands:**
    - Create `plugins/gemini/commands/write.md` (copy from `plugins/cursor/commands/write.md`, change `subagent_type` to `multi:gemini-writer`).
    - Create `plugins/cursor/commands/research.md` (copy from `plugins/gemini/commands/research.md`, change `subagent_type` to `multi:cursor-researcher`).
-5. **(Optional) Remove the originals:** delete or `_disabled-`-rename `plugins/cursor/commands/write.md`, `plugins/gemini/commands/research.md`, and the old subagents.
-6. **Validate:** `claude plugin validate $REPO` — must pass.
-7. **Commit** the changes.
-8. **Refresh:**
+6. **Optional cleanup:** delete or `_disabled-`-rename the originals.
+7. **Validate** via Bash: `claude plugin validate $REPO` — must pass.
+8. **Reinstall affected plugins** via Bash (one command at a time so errors are attributable):
    - `claude plugin install gemini@cc-multi-cli-plugin --force`
    - `claude plugin install cursor@cc-multi-cli-plugin --force`
-   - `claude plugin install multi@cc-multi-cli-plugin --force`
-9. **Restart Claude Code** (subagent definitions are cached at session start — the reinstalls above pick up command changes but not subagent changes).
-10. **Verify:** run `/gemini:write create /tmp/hello.py that prints "hi"` and `/cursor:research summarize package.json`. Both should return coherent output.
+   - `claude plugin install multi@cc-multi-cli-plugin --force`  *(subagents live here)*
+9. **Commit** via Bash: `cd $REPO && git add -A && git commit -m "customize: swap gemini/cursor writer/researcher roles"`
+10. **Report to user.** Because this change touched subagent files (step 4), the user must restart Claude Code. End with exactly this kind of prompt:
 
-Tell the user explicitly at step 9 that the restart is required.
+    > Done. I've swapped the roles, reinstalled gemini / cursor / multi, and committed the change. **Please restart Claude Code** — subagent definitions are session-cached, and I can't trigger the restart myself. After restart, run `/gemini:write create /tmp/hello.py that prints "hi"` to verify.
+
+If the change had ONLY touched command files (no subagents), skip the restart message entirely and tell the user they can run the test right now.

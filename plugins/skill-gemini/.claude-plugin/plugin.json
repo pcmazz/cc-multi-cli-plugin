@@ -1,19 +1,21 @@
 {
-  "name": "skill-gemini",
-  "description": "Claude Code skill to consult Gemini CLI as a read-only thinker for second opinions, research, and alternative perspectives",
-  "version": "1.0.0",
+  "name": "cc-multi-cli-plugin",
+  "description": "Delegate work from Claude Code to Codex, Gemini, Cursor, and GitHub Copilot CLIs via native structured protocols.",
+  "version": "2.0.0",
   "author": {
-    "name": "WalshLab",
-    "url": "https://github.com/WalshLab"
+    "name": "greenpolo",
+    "url": "https://github.com/greenpolo"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "claude-code",
     "plugin",
-    "skill",
+    "multi-cli",
+    "codex",
     "gemini",
-    "google",
-    "research",
-    "second-opinion"
+    "cursor",
+    "copilot",
+    "orchestration",
+    "subagent"
   ]
 }

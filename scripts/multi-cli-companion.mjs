@@ -116,6 +116,26 @@ function outputResult(value, asJson) {
   }
 }
 
+// Format whatever a non-Codex adapter returned as `result.error` into a useful
+// human string. Covers three shapes we've seen: Error instances, plain objects
+// with a `.message` field (e.g. JSON-RPC errors `{code, message}`), and strings.
+// Default `String(obj)` on plain objects produces "[object Object]" which hides
+// the real failure — this helper is specifically to avoid that.
+function formatAdapterError(err) {
+  if (!err) return "";
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  if (typeof err === "object" && err.message) {
+    const prefix = typeof err.code === "number" ? `[${err.code}] ` : "";
+    return `${prefix}${err.message}`;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 function outputCommandResult(payload, rendered, asJson) {
   outputResult(asJson ? payload : rendered, asJson);
 }
@@ -520,7 +540,7 @@ async function executeTaskRun(request) {
     });
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
-    const failureMessage = result.error instanceof Error ? result.error.message : result.error ? String(result.error) : "";
+    const failureMessage = formatAdapterError(result.error);
     const exitStatus = result.error ? 1 : 0;
 
     const rendered = renderTaskResult(
@@ -588,7 +608,7 @@ async function executeTaskRun(request) {
     });
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
-    const failureMessage = result.error instanceof Error ? result.error.message : result.error ? String(result.error) : "";
+    const failureMessage = formatAdapterError(result.error);
     const exitStatus = result.error ? 1 : 0;
 
     const rendered = renderTaskResult(
@@ -656,7 +676,7 @@ async function executeTaskRun(request) {
     });
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
-    const failureMessage = result.error instanceof Error ? result.error.message : result.error ? String(result.error) : "";
+    const failureMessage = formatAdapterError(result.error);
     const exitStatus = result.error ? 1 : 0;
 
     const rendered = renderTaskResult(
@@ -820,13 +840,14 @@ function createTrackedProgress(job, options = {}) {
     progress: createProgressReporter({
       stderr: Boolean(options.stderr),
       logFile,
+      cliLabel: options.cliLabel ?? job.cli ?? "codex",
       onEvent: createJobProgressUpdater(job.workspaceRoot, job.id)
     })
   };
 }
 
-function buildTaskJob(workspaceRoot, taskMetadata, write) {
-  return createCompanionJob({
+function buildTaskJob(workspaceRoot, taskMetadata, write, cli = "codex") {
+  const job = createCompanionJob({
     prefix: "task",
     kind: "task",
     title: taskMetadata.title,
@@ -835,6 +856,8 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
     summary: taskMetadata.summary,
     write
   });
+  job.cli = cli;
+  return job;
 }
 
 function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId, cli, role }) {
@@ -1012,7 +1035,7 @@ async function handleTask(argv, context = {}) {
     }
     requireTaskRequest(prompt, resumeLast);
 
-    const job = buildTaskJob(workspaceRoot, taskMetadata, write);
+    const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
     const request = buildTaskRequest({
       cwd,
       model,
@@ -1029,7 +1052,7 @@ async function handleTask(argv, context = {}) {
     return;
   }
 
-  const job = buildTaskJob(workspaceRoot, taskMetadata, write);
+  const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
   await runForegroundCommand(
     job,
     (progress) =>

@@ -317,6 +317,10 @@ export async function runAcpPrompt(cwd, prompt, options = {}) {
   };
 
   const client = await GeminiAcpClient.connect(cwd, {
+    // disableBroker: Phase H empirical testing found the broker path hangs with
+    // "ACP process is not ready" on Windows. Direct-spawn fallback works fine.
+    // Re-enable the broker after its startup flow is debugged.
+    disableBroker: true,
     env: options.env,
     onNotification: notificationHandler,
     onDiagnostic: diagnosticHandler

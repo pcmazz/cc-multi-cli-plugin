@@ -82,10 +82,14 @@ const pendingRequests = new Map();
 let activeClient = null;
 
 function spawnAcpProcess(cwd) {
+  // On Windows, `gemini` is a `.cmd` shim that needs shell expansion to launch.
+  // Match the platform-conditional shell pattern used in scripts/lib/app-server.mjs.
   const child = spawn("gemini", ["--acp"], {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
-    env: process.env
+    env: process.env,
+    shell: process.platform === "win32" ? (process.env.SHELL || true) : false,
+    windowsHide: true
   });
 
   const rl = readline.createInterface({ input: child.stdout });

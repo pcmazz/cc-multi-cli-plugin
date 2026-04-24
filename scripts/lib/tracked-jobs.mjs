@@ -114,7 +114,7 @@ export function createJobProgressUpdater(workspaceRoot, jobId) {
   };
 }
 
-export function createProgressReporter({ stderr = false, logFile = null, onEvent = null } = {}) {
+export function createProgressReporter({ stderr = false, logFile = null, onEvent = null, cliLabel = "codex" } = {}) {
   if (!stderr && !logFile && !onEvent) {
     return null;
   }
@@ -123,7 +123,7 @@ export function createProgressReporter({ stderr = false, logFile = null, onEvent
     const event = normalizeProgressEvent(eventOrMessage);
     const stderrMessage = event.stderrMessage ?? event.message;
     if (stderr && stderrMessage) {
-      process.stderr.write(`[codex] ${stderrMessage}\n`);
+      process.stderr.write(`[${cliLabel}] ${stderrMessage}\n`);
     }
     appendLogLine(logFile, event.message);
     appendLogBlock(logFile, event.logTitle, event.logBody);

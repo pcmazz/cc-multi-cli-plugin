@@ -131,15 +131,14 @@ For each installed, authenticated CLI, do the following:
 
    **Without Context7 key:** drop the `env = { ... }` line from the Context7 block.
 
-5. **Gemini / Cursor / Copilot — JSON**: Merge these two servers into `mcpServers`. Include a `_cc_multi_managed: true` marker key in each. Include Context7's `env` block ONLY if the user provided a key.
+5. **Gemini / Cursor / Copilot — JSON**: Merge these two servers into `mcpServers`. **Do NOT add any extra marker keys** like `_cc_multi_managed` inside the server entries — Gemini's schema validator rejects unknown keys and this breaks the entire config load. Include Context7's `env` block ONLY if the user provided a key.
 
    **Exa** (always includes its env block — required):
    ```json
    "exa": {
      "command": "npx",
      "args": ["-y", "@exa/mcp-server-exa"],
-     "env": { "EXA_API_KEY": "<EXA_KEY_FROM_CONFIG>" },
-     "_cc_multi_managed": true
+     "env": { "EXA_API_KEY": "<EXA_KEY_FROM_CONFIG>" }
    }
    ```
 
@@ -148,8 +147,7 @@ For each installed, authenticated CLI, do the following:
    "context7": {
      "command": "npx",
      "args": ["-y", "@upstash/context7-mcp"],
-     "env": { "CONTEXT7_API_KEY": "<CONTEXT7_KEY_FROM_CONFIG>" },
-     "_cc_multi_managed": true
+     "env": { "CONTEXT7_API_KEY": "<CONTEXT7_KEY_FROM_CONFIG>" }
    }
    ```
 
@@ -157,23 +155,41 @@ For each installed, authenticated CLI, do the following:
    ```json
    "context7": {
      "command": "npx",
-     "args": ["-y", "@upstash/context7-mcp"],
-     "_cc_multi_managed": true
+     "args": ["-y", "@upstash/context7-mcp"]
    }
    ```
 
-   If the user already has an `exa` or `context7` server under a different configuration, do NOT overwrite — instead, report the conflict and ask via `AskUserQuestion` whether to replace or keep theirs.
+   **Tracking our managed servers without breaking CLI schemas:** Instead of an inline marker, record which servers we added in a separate file — `~/.claude/plugins/cc-multi-cli-plugin/managed-servers.json`:
+   ```json
+   {
+     "<cli-name>": ["exa", "context7"]
+   }
+   ```
+   Update this file each time you add servers to a CLI's config. The customize skill and any future uninstall logic can read it to know which entries were added by this plugin vs the user.
+
+   **Conflict handling:** If the user already has an `exa` or `context7` server under a different configuration, do NOT overwrite — report the conflict and ask via `AskUserQuestion` whether to replace or keep theirs.
 
 6. Use `Read` to pull the file, `Edit`/`Write` to apply changes. Preserve the user's other keys and structure.
 
-## Step 5 — Verify
+## Step 5 — Verify (FAST, via native MCP-list commands)
 
-For each configured CLI, run a trivial MCP-reachability probe. The exact probe depends on the CLI:
+Do NOT run slow "ask the CLI to invoke a tool" probes — those take 30s-2min per CLI. Each CLI has a native `mcp` subcommand that lists configured servers instantly. Use those.
 
-- Gemini/Cursor/Copilot: run a short prompt that asks the CLI to invoke an Exa search (e.g., `copilot -p "Use the exa_search tool to search for 'test' and report what you found"` with a 60s timeout).
-- Codex: `codex` has an MCP-list command — use it if available, else skip verification for Codex.
+| CLI | Probe command | Expected output |
+|---|---|---|
+| Codex | `codex mcp list` (or `codex mcp` without args for help) | exa + context7 listed |
+| Gemini | `gemini mcp list` | exa + context7 listed |
+| Cursor | `"<path>/agent.cmd" mcp list` or `agent mcp list` on Unix | exa + context7 listed |
+| Copilot | No direct listing command found — read `~/.copilot/mcp-config.json` and parse to confirm `mcpServers.exa` and `mcpServers.context7` exist | servers present in JSON |
 
-If verification fails, print the error but don't roll back. The user can inspect and fix.
+**If any of these fail** (non-zero exit, schema error, missing servers in output):
+- Print the exact error.
+- Do NOT roll back automatically — let the user see what went wrong.
+- For schema errors (e.g., Gemini rejecting unknown keys), tell the user which config file has the issue and quote the error message.
+
+**Time budget:** each probe should complete in < 5 seconds. If one hangs, kill it (`timeout 10 <command>` via Bash) and report as failed — don't wait 2 minutes.
+
+**Don't verify MCP server runtime reachability here.** The CLI listing each server confirms the config is valid and the CLI will spawn the server on first use. The server actually responding to queries is tested on the first real `/gemini:research` / `/copilot:research` / etc. invocation — not in setup.
 
 ## Step 6 — Report
 

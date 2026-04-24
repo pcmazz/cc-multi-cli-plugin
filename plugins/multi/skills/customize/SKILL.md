@@ -116,7 +116,37 @@ Edit `plugins/multi/agents/<cli>-<role>.md`:
 
 Many CLIs have their own sandbox/mode flags — consult `plugins/multi/scripts/lib/adapters/<cli>.mjs` for what the adapter understands.
 
-### 6. Change a role's prompt template (slash-command prefix sent to the CLI)
+### 6. Hardcode a default model (or other CLI flag) for a subagent
+
+Subagent Bash invocations pass `--model` through from the user's request. To bake in a *default* model that applies when the user doesn't specify one, edit the subagent's Bash line to include `--model <name>` unconditionally, and update the forwarding rules to note that user overrides win.
+
+**Example — make `/gemini:research` default to `gemini-3.1-pro`:**
+
+Edit `plugins/multi/agents/gemini-researcher.md`. Change the forwarding rules block from:
+
+```markdown
+- Use exactly one `Bash` call to invoke:
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli gemini --role researcher --read-only ...`
+- Pass `--model`, `--resume`, `--fresh` as runtime controls.
+```
+
+to:
+
+```markdown
+- Use exactly one `Bash` call to invoke:
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli gemini --role researcher --read-only --model gemini-3.1-pro ...`
+- If the user's request explicitly specifies a different `--model`, use that value instead of `gemini-3.1-pro`.
+- Pass `--resume`, `--fresh` as runtime controls.
+```
+
+Key points:
+- The hardcoded `--model gemini-3.1-pro` sits alongside the other fixed flags like `--read-only`.
+- The "user override" rule in prose form lets the subagent Claude know to swap in a user-supplied model when one is explicitly passed.
+- The same pattern works for `--effort`, `--sandbox`, or any other CLI flag — just be explicit about whether the user can override.
+
+**After this edit:** reinstall `multi` and restart Claude Code (subagent change = restart required, per the refresh table above).
+
+### 7. Change a role's prompt template (slash-command prefix sent to the CLI)
 
 Role-specific prompt prefixes live in each adapter's `buildPrompt()` function. Example in `plugins/multi/scripts/lib/adapters/cursor.mjs`:
 

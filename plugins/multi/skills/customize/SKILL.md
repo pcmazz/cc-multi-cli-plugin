@@ -19,29 +19,64 @@ Before editing anything, determine WHICH files to edit. Three scenarios:
 
 Record the path you'll edit as `$REPO`. All subsequent file paths in this skill are relative to `$REPO`.
 
-## Step 0.5 — Research the CLI(s) involved (BEFORE touching files)
+## Step 0.5 — Verify CLI-specific strings BEFORE hardcoding them
 
-If the user's request mentions a specific model, slash command, mode, or CLI-specific flag, **verify the exact names and capabilities before writing anything**. Do not ask the user to confirm model IDs or slash-command names that you could look up yourself.
+Before hardcoding any CLI-specific string (model IDs, effort levels, sandbox modes, flag names, slash commands) as a default, verify it. Do not ask the user to confirm these — Claude can look them up faster and more reliably than the user can recall them.
 
-**What to extract:**
+**Preview-suffix trap:** Many CLIs accept IDs with a version-qualifier suffix. Gemini's current models are `gemini-3.1-pro-preview` and `gemini-3-flash-preview` — not `gemini-3.1-pro` or `gemini-3-flash`. The unsuffixed IDs 404 at runtime. This is the #1 reason to verify rather than type what "should" work.
 
-- **Exact model identifiers** the CLI accepts (e.g., `gemini-3.1-pro` vs `gemini-3-pro-preview`, or `auto` if the CLI supports automatic selection). Getting this wrong produces a runtime 400 from the provider.
-- **Available slash commands and modes** (e.g., Cursor has `/plan`, `/ask`, `/debug`; Copilot has `/research`, `/review`; Gemini's modes are different). If the user's request implies a capability, confirm the CLI actually exposes it.
-- **Runtime flags** (sandbox modes, effort levels, read-only toggles) — what names does the CLI's `--help` actually use?
-- **Known quirks** that affect your change (Windows-specific behavior, authentication requirements, recent breaking changes).
+**Run these in parallel** — they are independent and cross-check each other:
 
-**How to look things up (in this order):**
+### 1. Ask the CLI directly (highest signal — ground truth)
 
-1. **Run the CLI directly** — fastest and authoritative:
-   - `gemini models` or `gemini --help | grep -i model`
-   - `codex --help`
-   - `"<path>/agent.cmd" models` or `cursor-agent --help`
-   - `copilot --help`
-2. **Use context7** (proactive: this covers Gemini CLI, Cursor CLI, Copilot CLI, and Codex docs directly — fetch with `resolve-library-id` → `query-docs`).
-3. **Use exa web search** for recent changelogs, forum posts, or community notes (always via the `exa` MCP server per the user's web-search policy).
-4. **Read `plugins/multi/scripts/lib/adapters/<cli>.mjs`** — the plugin's own adapter is the source of truth for what flags it forwards to the CLI.
+The binary on the user's machine is authoritative for "will it work right now." If the CLI has a listing subcommand, use it:
 
-**Record findings inline in your response to the user** (so they can double-check), then proceed to file edits without asking for confirmation on verifiable facts.
+- `codex --help`
+- `cursor-agent models` (or `"<path>/agent.cmd" models` on Windows)
+- `copilot --help | grep -i model`
+
+Most CLIs (including Gemini) have no `models list` subcommand. Prompt them instead:
+
+```bash
+gemini -p "List the exact model ID strings this CLI currently accepts for the -m flag. Reply with just the IDs, one per line."
+```
+
+Every AI CLI can answer a natural-language prompt about itself. This generalizes.
+
+### 2. Read the CLI's source constants (canonical, version-pinned)
+
+Most CLIs have a `config/models.ts`, `constants.py`, or similar where valid identifiers are listed as exported constants. These rarely move and are authoritative. Use exa with a targeted query:
+
+```
+"<cli-name> github models.ts model constants"
+```
+
+For Gemini specifically, the file is `google-gemini/gemini-cli/packages/core/src/config/models.ts`, which exports constants like `PREVIEW_GEMINI_MODEL = 'gemini-3-pro-preview'`.
+
+### 3. Check vendor docs + release notes (for context the CLI won't tell you)
+
+Use context7 (proactively — covers Gemini CLI, Cursor CLI, Copilot CLI, Codex) or exa for:
+
+- Deprecation timelines and aliasing (Google shut down `gemini-3-pro-preview` on 2026-03-09 and aliases it to `gemini-3.1-pro-preview`)
+- New modes or flags added recently
+- Known breaking changes across versions
+
+The CLI will tell you what it accepts; docs will tell you what you should use.
+
+### Resolving disagreements
+
+If the three sources disagree:
+- **CLI wins** for "will it work right now."
+- **Docs win** for "should I use this" (e.g., avoid a deprecated ID even if the CLI still accepts it).
+
+### Also check for CLI-specific facts
+
+- **Available slash commands and modes** (Cursor: `/plan`, `/ask`, `/debug`; Copilot: `/research`, `/review`; Gemini modes differ). Don't assume a capability exists because the name sounds plausible.
+- **Runtime flags** (sandbox modes, effort levels, read-only toggles) — check `--help` for exact spelling.
+- **Windows quirks** (`.cmd` shims, shell requirements, PATH differences).
+- **`plugins/multi/scripts/lib/adapters/<cli>.mjs`** is the source of truth for what flags our companion forwards.
+
+**Record findings inline in your response** (so the user can double-check), then proceed to file edits without asking for confirmation on verifiable facts.
 
 ## Safety first
 
@@ -144,7 +179,9 @@ Many CLIs have their own sandbox/mode flags — consult `plugins/multi/scripts/l
 
 Subagent Bash invocations pass `--model` through from the user's request. To bake in a *default* model that applies when the user doesn't specify one, edit the subagent's Bash line to include `--model <name>` unconditionally, and update the forwarding rules to note that user overrides win.
 
-**Example — make `/gemini:research` default to `gemini-3.1-pro`:**
+**Example — make `/gemini:research` default to `gemini-3.1-pro-preview`:**
+
+(Step 0.5 told you to verify the model ID. For Gemini 3.x models, the IDs carry a `-preview` suffix — `gemini-3.1-pro-preview`, NOT `gemini-3.1-pro`. Forgetting this suffix is the most common way to ship a broken subagent.)
 
 Edit `plugins/multi/agents/gemini-researcher.md`. Change the forwarding rules block from:
 
@@ -158,13 +195,13 @@ to:
 
 ```markdown
 - Use exactly one `Bash` call to invoke:
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli gemini --role researcher --read-only --model gemini-3.1-pro ...`
-- If the user's request explicitly specifies a different `--model`, use that value instead of `gemini-3.1-pro`.
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli gemini --role researcher --read-only --model gemini-3.1-pro-preview ...`
+- If the user's request explicitly specifies a different `--model`, use that value instead of `gemini-3.1-pro-preview`.
 - Pass `--resume`, `--fresh` as runtime controls.
 ```
 
 Key points:
-- The hardcoded `--model gemini-3.1-pro` sits alongside the other fixed flags like `--read-only`.
+- The hardcoded `--model gemini-3.1-pro-preview` sits alongside the other fixed flags like `--read-only`.
 - The "user override" rule in prose form lets the subagent Claude know to swap in a user-supplied model when one is explicitly passed.
 - The same pattern works for `--effort`, `--sandbox`, or any other CLI flag — just be explicit about whether the user can override.
 

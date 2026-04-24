@@ -19,12 +19,29 @@ Before writing any code, pull everything you need to know about the CLI so you d
 - **Authentication mechanism** — env var, OAuth, device code, API key header, etc.
 - **Known quirks** (Windows shell requirements, PATH issues, version-specific behavior).
 
-**How to look things up (in this order):**
+**How to look things up — run these three in parallel:**
 
-1. **Run the CLI directly** — `<cli> --help`, `<cli> models`, `<cli> status`, `<cli> about`. Fastest and authoritative.
-2. **Use context7** — call `resolve-library-id` with the CLI's name, then `query-docs` for specific topics (ACP support, model list, slash commands).
-3. **Use exa web search** for recent changelogs, forum posts, and community notes (via the `exa` MCP server).
-4. **Check existing adapters** in `plugins/multi/scripts/lib/adapters/` as reference templates.
+1. **Ask the CLI directly** (ground truth for "will this work right now").
+   - Try `<cli> --help`, `<cli> models`, `<cli> status`, `<cli> about` first — subcommands if they exist.
+   - If the CLI has no `models` subcommand, prompt it:
+     ```bash
+     <cli> -p "List the exact model ID strings this CLI currently accepts. Reply with just the IDs, one per line."
+     ```
+   - Every AI CLI can answer a natural-language prompt about itself.
+
+2. **Read the CLI's source constants** (canonical, version-pinned). Use exa:
+   ```
+   "<cli-name> github models.ts model constants"
+   ```
+   Most AI CLIs have a `config/models.ts`, `constants.py`, or similar exporting the valid identifiers. These are authoritative and rarely move.
+
+3. **Check vendor docs via context7 or exa** for deprecation timelines, aliasing, and recent breaking changes. (Example: Gemini's `gemini-3-pro-preview` was retired 2026-03-09 and now aliases to `gemini-3.1-pro-preview`. The CLI still accepts the old ID but you shouldn't hardcode it.)
+
+**Preview-suffix trap:** Many CLIs qualify unstable IDs with a suffix (`-preview`, `-beta`, `-exp`). Don't hardcode the unsuffixed variant — it will 404 at runtime. Gemini 3.x IDs all end in `-preview`.
+
+**Resolving disagreements:** CLI wins for "does it work"; docs win for "should I use this."
+
+4. **Check existing adapters** in `plugins/multi/scripts/lib/adapters/` as reference templates for the transport pattern you'll reuse.
 
 Record findings in your response to the user (so they can double-check), then proceed without asking for confirmation on verifiable facts.
 

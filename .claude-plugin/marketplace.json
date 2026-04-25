@@ -43,6 +43,13 @@
       "version": "2.0.0",
       "author": { "name": "greenpolo" },
       "source": "./plugins/copilot"
+    },
+    {
+      "name": "qwen",
+      "description": "Adds /qwen:write (Qwen3-Coder via Qwen Code CLI ACP). Requires multi.",
+      "version": "2.0.0",
+      "author": { "name": "greenpolo" },
+      "source": "./plugins/qwen"
     }
   ]
 }

@@ -1,47 +1,46 @@
 # cc-multi-cli-plugin
 
-A Claude Code plugin that lets Claude delegate work to **four external AI CLIs** — Codex, Gemini, Cursor, and GitHub Copilot — as first-class subagents and slash commands. Each CLI is reached via its native structured protocol (ASP, ACP, or JSON-RPC SDK), so sessions, streaming, tool calls, and background jobs all work.
+If you have access to multiple AI coding CLIs (Codex, Gemini, Cursor, Copilot, etc.), this plugin lets Claude Code delegate to whichever one is best for the task — without you having to switch tools or run them yourself.
 
-> **v2.0.0** — This plugin replaces the former `skill-gemini`. See [CHANGELOG.md](CHANGELOG.md) for migration notes.
+Each CLI is wired up through its native protocol (ACP, ASP, JSON-RPC), not screen-scraped. Sessions, streaming, tool calls, and background jobs all work normally.
 
-## Install in one paste
+## Install
 
-Paste this into Claude Code:
+Paste into Claude Code:
 
-> Install `cc-multi-cli-plugin` from github.com/greenpolo/cc-multi-cli-plugin, then run `/multi:setup` to configure all four CLIs with Exa + Context7 MCPs.
-
-Claude runs `/plugin marketplace add`, `/plugin install cc-multi-cli-plugin`, and `/multi:setup` for you.
-
-## Manual install
-
-```bash
+```
 /plugin marketplace add https://github.com/greenpolo/cc-multi-cli-plugin
-/plugin install cc-multi-cli-plugin
+/plugin install multi@cc-multi-cli-plugin
 /multi:setup
 ```
 
+`/multi:setup` detects which CLIs you have, installs the matching sub-plugins, and wires Exa + Context7 MCPs into each.
+
 ## Commands
 
-| Command | What it does |
+| | |
 |---|---|
-| `/multi:setup` | Setup wizard — detects CLIs, configures MCPs |
-| `/gemini:research` | Deep research with Gemini's 1M context |
-| `/codex:execute` | Delegate a plan step to Codex |
-| `/cursor:write` | Bulk code writing (Cursor Agent mode) |
-| `/cursor:plan` | Design an approach (Cursor Plan mode) |
-| `/cursor:debug` | Root-cause debugging (Cursor Debug mode) |
-| `/copilot:research` | GitHub + web investigation (Copilot `/research`) |
-| `/copilot:review` | Copilot code review agent |
+| `/gemini:research` | Deep research with Gemini's 1M-token context |
+| `/gemini:explore` | Fast codebase exploration (Gemini 3 Flash) |
+| `/codex:execute` | Hand a plan step to Codex |
+| `/cursor:write` | Bulk code writing |
+| `/cursor:plan` | Design an approach before coding |
+| `/cursor:debug` | Hypothesis-driven debugging |
+| `/copilot:research` | GitHub + web investigation |
+| `/copilot:review` | GitHub-context code review |
+| `/copilot:plan` | Copilot's plan mode |
 
-Claude also auto-dispatches to four subagents when appropriate: `gemini-researcher`, `codex-execute`, `cursor-writer`, `cursor-debugger`.
+Claude can also auto-dispatch to these without you typing the command.
 
 ## Customize
 
-Ask Claude to customize which CLI handles which role. The plugin ships a `customize` skill that walks Claude through the file edits.
+Two skills ship with the plugin:
 
-Example:
-> Swap Gemini and Cursor roles — make Gemini the bulk writer and Cursor the researcher.
+- **customize** — change which CLI handles what. *"Make Gemini the writer instead of Cursor."* Claude does the file edits, reinstalls, and tells you what restarts are needed.
+- **multi-cli-anything** — add a new CLI (Qwen, Aider, OpenCode, anything that speaks ACP). Claude scaffolds the new plugin in the marketplace.
+
+Just ask Claude in plain English. The skills activate automatically.
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for upstream attributions.
+Apache 2.0. See [NOTICE](NOTICE) for upstream credits.

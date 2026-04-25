@@ -26,23 +26,32 @@ Tabulate which succeed. For each failure, tell the user the install command:
 
 Continue only with the CLIs that are installed. Do not block on missing ones.
 
+**No CLIs detected:** if zero CLIs from the list are installed, ABORT setup before any further step. Do not prompt for API keys, do not install plugins, do not configure MCPs. Print:
+
+> *"None of Codex, Gemini, Cursor, or Copilot is installed. Install at least one (commands above) and re-run `/multi:setup`. Nothing was changed."*
+
+Then exit. The wizard has no productive work without at least one CLI to configure.
+
 ## Step 1.5 — Ensure the CLI-specific plugins are installed (idempotent)
 
 For each detected CLI, check the current install state FIRST, then act:
 
 1. **Check what's already installed** via Bash:
    ```bash
-   claude plugin list 2>&1 | grep "@cc-multi-cli-plugin"
+   claude plugin list 2>&1 | grep "@cc-multi-cli-plugin" || true
    ```
-   This lists all plugins in the marketplace that are currently installed. Compare against the CLIs you detected in Step 1.
+   The `|| true` is required: `grep` exits 1 when the marketplace has no plugins installed yet (clean first run), and an exit-1 in a piped command can torpedo subsequent commands or be misread as an error. Treat the (possibly empty) stdout as a state signal, not as an error.
 
 2. **For each detected CLI whose plugin is NOT yet installed**, and ONLY for those, use `AskUserQuestion` to ask whether to install it. Skip the prompt entirely if the plugin is already installed — don't ask the user about plugins they already have.
 
-3. **Install only the plugins the user accepted:**
-   - Gemini → `claude plugin install gemini@cc-multi-cli-plugin` (adds `/gemini:research`)
+3. **Install only the plugins the user accepted.** Read the actual command list from `marketplace.json` plus the live filesystem (`ls plugins/<cli>/commands/*.md`) — do NOT hardcode a list here, since the customize skill and `multi-cli-anything` skill add commands routinely. As of v2.0.0 defaults, the shipped commands are:
+
+   - Gemini → `claude plugin install gemini@cc-multi-cli-plugin` (adds `/gemini:research`, `/gemini:explore`)
    - Codex → `claude plugin install codex@cc-multi-cli-plugin` (adds `/codex:execute`)
    - Cursor → `claude plugin install cursor@cc-multi-cli-plugin` (adds `/cursor:write`, `/cursor:plan`, `/cursor:debug`)
-   - Copilot → `claude plugin install copilot@cc-multi-cli-plugin` (adds `/copilot:research`, `/copilot:review`)
+   - Copilot → `claude plugin install copilot@cc-multi-cli-plugin` (adds `/copilot:research`, `/copilot:review`, `/copilot:plan`)
+
+   When announcing what each install will provide, list the actual `commands/*.md` files in that plugin directory rather than the static list above (which can drift).
 
 4. **Report** at the end of Step 1.5:
    - `✓ <cli>: already installed` for plugins that were already there (no action taken)
@@ -68,10 +77,11 @@ For each detected CLI, check the current install state FIRST, then act:
 
    **Note for Git Bash users on Windows:** `which <bin>` returns "no <bin>" even when the directory IS on PATH, because Git Bash's `which` doesn't try `.cmd` / `.exe` extensions. Don't use `which` as your authoritative check — split PATH and compare directories instead. The binary works fine from PowerShell, cmd.exe, and Git Bash (using `<bin>.cmd` explicitly).
 
-4. **If NOT on PATH**, ask via `AskUserQuestion` with ONE button option:
-   - **Header text:** "The `<cli>` binary lives at `<full-path>` but is not on your PATH. Adding it lets you type `<bin-name>` directly from any terminal. Skip if you don't want your environment modified."
-   - **Button option:** "Skip — leave PATH alone"
-   - User clicks Skip OR types anything else (treat any non-skip response as consent).
+4. **If NOT on PATH**, ask via `AskUserQuestion` with TWO explicit button options. Environment mutation must be opt-in, not opt-out. Don't treat ambiguous text ("no thanks", "what does this do?") as consent.
+   - **Header text:** "The `<cli>` binary lives at `<full-path>` but is not on your PATH. Adding it lets you type `<bin-name>` directly from any terminal. The change is per-user, persistent, and reversible (revert instructions printed after)."
+   - **Button option 1:** "Add to PATH"
+   - **Button option 2:** "Skip — leave PATH alone"
+   - Only proceed with the edit on explicit "Add to PATH" selection. Free-text response → treat as Skip (safer default).
 
 5. **On consent, do the platform-appropriate edit, idempotent:**
 
@@ -109,7 +119,7 @@ For each detected CLI, check the current install state FIRST, then act:
 
 7. **Bash session inside Claude Code is also unaffected** by user-PATH changes you just made. Don't try to verify by running `<bin-name>` immediately afterward — it'll fail in the current process even though the persistent change is correct. Trust the registry/RC-file edit and move on.
 
-**Skip this entire step if `--dry-run` was passed.**
+**Dry-run behavior:** run the detection (steps 1-3) read-only; do NOT make the PATH edit (step 5) and do NOT prompt for consent (step 4). Report what WOULD be added, then continue. The Dry-run section at the bottom of this file is the canonical source of truth on what runs vs what's suppressed in dry-run mode — defer to it for any conflict.
 
 ## Step 2 — Verify auth
 
@@ -117,7 +127,7 @@ For each installed CLI, check auth:
 
 - Codex: `codex login status` (NOT `codex whoami` — that doesn't exist)
 - Gemini: `gemini --version` should run without prompting for login (if it prompts, the CLI isn't authenticated)
-- Cursor: `agent status` (the binary from Step 1)
+- Cursor: invoke the resolved binary path from Step 1 (NOT a literal `agent status`). On Windows that's typically `"C:/Users/<n>/AppData/Local/cursor-agent/agent.cmd" status`. Quote the path. Use the variable you stashed in Step 1 throughout the rest of the file — never assume `agent` is on PATH.
 - Copilot: **DO NOT** run a `copilot -p "hi"` inference probe — that burns ~10-20k premium tokens just to check auth. Cheap path:
   1. Check env vars `GH_TOKEN` / `COPILOT_GITHUB_TOKEN` / `GITHUB_TOKEN` — if any is set, assume authenticated.
   2. Else check `gh auth status` (the GitHub CLI shares Copilot's auth layer). Exit 0 = authenticated.
@@ -130,7 +140,11 @@ If unauthenticated, give the exact login command and use `AskUserQuestion` to as
 
 ### Step 3a — Look for keys the user ALREADY HAS before prompting
 
-Claude Code and other MCP-using tools often already have these keys on the user's machine. Before bothering the user with a prompt, do this discovery pass via `Read`:
+Claude Code and other MCP-using tools often already have these keys on the user's machine. Before bothering the user with a prompt, do this discovery pass.
+
+Tool note: use `Bash` (not `Read`) to glob optional files and read env vars — `Read` doesn't expand `$VAR` and `~` reliably on Windows, and it errors hard on missing files. Bash with `[ -f path ] && cat path` is the safe pattern. Use `Read` only after Bash has confirmed the file exists.
+
+For each parse below: if the file exists but is malformed (broken JSON/TOML), do NOT crash the wizard — log a one-line warning, skip that source, and continue to the next.
 
 1. **Plugin's own stored keys:** `~/.claude/plugins/cc-multi-cli-plugin/config.json` (if exists, parse; use `exaApiKey` / `context7ApiKey` fields).
 2. **Claude Code's project-level MCP config:** `~/.claude/.mcp.json` (parse JSON; look for any `mcpServers.<name>.env.EXA_API_KEY` and `.CONTEXT7_API_KEY`).
@@ -139,7 +153,7 @@ Claude Code and other MCP-using tools often already have these keys on the user'
    - `~/.gemini/settings.json` — same idea.
    - `~/.cursor/mcp.json` — same.
    - `~/.copilot/mcp-config.json` — same.
-4. **Common env vars:** `$EXA_API_KEY` in the shell environment. Uncommon but worth a one-line check.
+4. **Shell env vars** via Bash: `echo "${EXA_API_KEY:-}"` and `echo "${CONTEXT7_API_KEY:-}"`. The `:-` guard avoids set-u failures on unset vars.
 
 If you find a plausible key, compose a summary and ASK before using it (via `AskUserQuestion`):
 
@@ -156,10 +170,12 @@ If you find nothing, proceed to the explicit prompt (Step 3b).
 ### Exa API key (required for Exa MCP to function)
 
 Ask via `AskUserQuestion`:
-- **Header / question text:** "Exa API key (required for the Exa MCP to work). Get one free at https://dashboard.exa.ai. To provide one, paste the key as your response. Otherwise click Skip — the Exa MCP will be registered without a key and will fail at runtime until you add one."
-- **Button option:** "Skip — register Exa without a key (will fail at runtime)"
+- **Header / question text:** "Exa API key (required for the Exa MCP to work). Get one free at https://dashboard.exa.ai. To provide one, paste the key as your response. Otherwise click Skip — Exa will be entirely OMITTED from your CLI configs (no half-broken state). You can re-run /multi:setup later when you have a key."
+- **Button option:** "Skip — omit Exa from all configs"
 
 The user either clicks Skip or pastes the key. Treat the free-text response (if any) as the API key.
+
+**Skip semantics — single canonical behavior throughout the wizard:** if the user skips Exa, the wizard does NOT register an Exa server in any CLI's config. Empty-string in `config.json` is the "Exa not configured" signal; downstream steps (3c, 4, 5) all check this flag and treat Exa as a no-op. The Step 5 verifier expects only Context7 (not "exa + context7") when Exa was skipped.
 
 ### Context7 API key (optional)
 
@@ -206,24 +222,37 @@ Never echo either key back after capture — just confirm "Saved." If the user s
 
 ## Step 3.5 — One-time migration from v1 (only if needed)
 
-Older versions of this skill wrote `_cc_multi_managed: true` marker keys inside `mcpServers` entries. That's been deprecated (it broke Gemini's schema validator). On the FIRST re-run after upgrading, those markers need to be stripped from any CLI config that has them.
+Older versions of this skill wrote `_cc_multi_managed: true` marker keys inside `mcpServers` entries. That's been deprecated (it broke Gemini's schema validator). On the FIRST re-run after upgrading, those markers need to be stripped from any CLI config that has them — AND `managed-servers.json` needs to be written, since v1 users have managed entries already in place but no tracking file.
 
-Detect by reading each CLI's config and grepping for `_cc_multi_managed`. If found, announce ONCE up front: *"Migrating from v1 marker-key tracking to v2 managed-servers.json — will strip stale markers from <list of files>."* Then strip them inline as part of Step 4's audit. Don't repeat the announcement per-CLI. After this one-time pass on all v1 users, this code path becomes dead — it's intentional migration debt, not ongoing audit work.
+Detect by reading each CLI's config and grepping for `_cc_multi_managed`. If found:
 
-## Step 3.7 — Fast-path early bail
+1. Announce ONCE up front: *"Migrating from v1 marker-key tracking to v2 managed-servers.json — will strip stale markers from `<list of files>` and create the tracking file."*
+2. Strip the markers inline as part of Step 4's audit (don't repeat the announcement per-CLI).
+3. **Write `~/.claude/plugins/cc-multi-cli-plugin/managed-servers.json`** based on what entries are currently present in each CLI's config (post-marker-strip). Example: if Codex's config has `[mcp_servers.exa]` and `[mcp_servers.context7]` after migration, write `{"codex": ["exa", "context7"]}` for that key. This unblocks Step 3.7's fast-path on subsequent runs.
 
-Most re-runs of `/multi:setup` are "everything still matches canonical, nothing to do." Don't make those re-runs do 30 seconds of probes + audits + reports. Run this cheap check first:
+After this one-time pass on all v1 users, this code path is dead — it's intentional migration debt, not ongoing audit work.
+
+## Step 3.7 — Fast-path early bail (read-only check)
+
+Most re-runs of `/multi:setup` are "everything still matches canonical, nothing to do." Don't make those re-runs do 30 seconds of probes + audits + reports. Run this cheap check.
+
+**Important — fast-path scope:** the bail terminates the WIZARD'S MCP-config work (Steps 3.5 → 4 → 5 → 6). It does NOT skip Steps 1, 1.5, or 1.7. Those are independent (CLI detection, plugin install, PATH) — they need to run regardless because new CLIs may have been installed since last run, new plugins may need installing, PATH may still be wrong. The fast-path is purely about MCP configuration idempotency, not plugin-management idempotency.
+
+**Conditions for bail (ALL must hold):**
 
 1. Plugin's `config.json` has both keys (or empty-strings for declined ones).
 2. `~/.claude/plugins/cc-multi-cli-plugin/managed-servers.json` exists.
-3. For each CLI listed in `managed-servers.json`, the live config file contains the expected server entries (`exa`, `context7`) with credentials matching `config.json`'s canonical values, and no stale `_cc_multi_managed` markers.
-4. No conflicting same-purpose servers (Exa-purpose / Context7-purpose) exist beyond the canonical entries.
+3. **The set of CLIs in `managed-servers.json` matches the set of installed-AND-authenticated CLIs from Steps 1 and 2.** A new CLI installed since the last run (e.g., user just installed Copilot) means the tracking file is incomplete → must NOT bail; fall through and configure the new CLI. This is the critical check — Codex's review found the prior version missed this.
+4. For each CLI listed in `managed-servers.json`, the live config file contains the expected server entries with credentials matching `config.json`'s canonical values, and no stale `_cc_multi_managed` markers.
+5. No conflicting same-purpose servers (Exa-purpose / Context7-purpose) exist beyond the canonical entries.
 
-If ALL of the above are true → print:
+**Behavior under `--dry-run`:** Step 3.7 NEVER exits early in dry-run mode — it just prints whether a real run would bail or not, then continues to the full audit so the dry-run report is complete. Real runs use the bail to terminate.
 
-> *"`/multi:setup` quick check: all CLI configs match canonical state. Nothing to do. (Re-run with `--full` to force re-audit.)"*
+If ALL conditions hold AND not `--dry-run` → print:
 
-…and exit. Steady-state re-runs finish in < 5 seconds.
+> *"`/multi:setup` quick check: all configured CLIs match canonical state. Nothing to do. (Re-run with `--full` to force re-audit.)"*
+
+…and skip to Step 6's brief summary, exit. Steady-state re-runs finish in < 5 seconds.
 
 If any check fails → fall through to Step 4 (full audit + reconcile).
 
@@ -257,7 +286,16 @@ For each installed, authenticated CLI, do the following:
 
    Treat "audit + reconcile" as the default behavior, not a special case.
 
-4. **Codex — TOML**: Append the managed block, wrapped in comment markers. Include `CONTEXT7_API_KEY` in Context7's env ONLY if the user provided a Context7 key; otherwise omit the env line entirely (server still works at free-tier rate limits).
+4. **Codex — TOML**: parse-and-replace, NOT unconditional append. The prior "append the managed block" rule was non-idempotent — re-runs would create duplicate `[mcp_servers.exa]` tables. Correct flow:
+
+   a. Parse `~/.codex/config.toml`. If malformed, report and skip Codex (don't attempt repair).
+   b. Look for the existing managed-block markers (`# BEGIN cc-multi-cli-plugin managed block` / `# END cc-multi-cli-plugin managed block`) and any pre-existing `[mcp_servers.exa]` / `[mcp_servers.context7]` tables (whether managed or user-authored).
+   c. If a managed block exists already AND its content matches the canonical block we'd write → no-op for Codex this run.
+   d. Otherwise: REMOVE any existing managed block (between markers) AND any pre-existing `exa` / `context7` tables that the audit determined are ours, then APPEND the canonical managed block ONCE.
+
+   This must be a single atomic write — read full file, transform in-memory, write back. Don't append in-place mid-rewrite.
+
+   Include `CONTEXT7_API_KEY` in Context7's env ONLY if the user provided a Context7 key; otherwise omit the env line entirely (server still works at free-tier rate limits).
 
    **With Context7 key:**
    ```toml
@@ -341,12 +379,20 @@ For each installed, authenticated CLI, do the following:
 
 Do NOT run slow "ask the CLI to invoke a tool" probes — those take 30s-2min per CLI. Each CLI has a native `mcp` subcommand that lists configured servers instantly. Use those.
 
-| CLI | Probe command | Expected output |
-|---|---|---|
-| Codex | `codex mcp list` (or `codex mcp` without args for help) | exa + context7 listed |
-| Gemini | `gemini mcp list` | exa + context7 listed |
-| Cursor | `"<path>/agent.cmd" mcp list` or `agent mcp list` on Unix | exa + context7 listed |
-| Copilot | No direct listing command found — read `~/.copilot/mcp-config.json` and parse to confirm `mcpServers.exa` and `mcpServers.context7` exist | servers present in JSON |
+**Verify against the INTENDED state from Step 4, not against hardcoded names.** Step 4 produces a per-CLI list of "what we expected to be present after reconciliation." That intended state may legitimately differ from canonical:
+
+- If the user chose "Keep yours" for a conflict, the canonical name (`exa`) won't be there — the user's name (`exa-websearch`) is.
+- If the user skipped Exa, neither `exa` nor any Exa-purpose server should be expected.
+- If the user opted to consolidate dual credentials, only the canonical entries should be present.
+
+For each CLI, compare the probe output (or parsed JSON for Copilot) against the intended-state list. Report `✓ matches intended state` or `✗ drift` per CLI.
+
+| CLI | Probe command |
+|---|---|
+| Codex | `codex mcp list` (or `codex mcp` without args for help) |
+| Gemini | `gemini mcp list` |
+| Cursor | `"<resolved-binary-path>" mcp list` (use the path stashed in Step 1, NOT a literal `agent`) |
+| Copilot | No direct listing command — `[ -f ~/.copilot/mcp-config.json ] && cat` then parse. If parse fails, treat as malformed-config (don't crash). |
 
 **Empty-output gotcha — re-probe with verbose flag before declaring failure.** Some CLIs (notably `gemini mcp list`) exit 0 with empty stdout when servers are correctly configured but the parser used for table rendering is in a weird state. If a probe exits 0 with empty output, retry once with the CLI's verbose/debug flag (`gemini mcp list -d`, etc.) and parse from there. ONLY after both probes return empty should you declare a failure. Exit-0-empty-stdout is not a reliable failure signal.
 
@@ -435,6 +481,7 @@ Avoid `ls <optional-file>` or similar to test for existence — non-zero exit ca
 
 ## Error handling
 
-- If a config file is malformed JSON/TOML, report the problem and skip that CLI — don't attempt repair.
-- If the user declines to provide an Exa API key, skip the Exa server but still install Context7.
+- If a config file is malformed JSON/TOML at any parse point (Step 3a discovery, Step 3.7 fast-path check, Step 4 audit), report the problem and skip that CLI — don't attempt repair. Apply this rule to every parse, not just one.
+- If the user declines to provide an Exa API key, OMIT the Exa server from all configs. Context7 still gets installed across all configured CLIs. (Single canonical Exa-skip behavior — see Step 3b.)
+- If the user declines to provide a Context7 key, install Context7 without an env block (free-tier limits apply at runtime).
 - If a config file is read-only or locked, report the problem and skip that CLI.

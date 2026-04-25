@@ -1,0 +1,11 @@
+{
+  "name": "cursor",
+  "description": "Delegate coding, planning, and debugging to Cursor CLI via ACP. Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
+  "version": "2.0.0",
+  "author": {
+    "name": "greenpolo",
+    "url": "https://github.com/greenpolo"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["claude-code", "cursor", "write", "debug", "acp"]
+}

@@ -1,40 +1,51 @@
-# skill-gemini
+![cc-multi-cli-plugin](docs/assets/banner.png)
 
-A Claude Code plugin that lets you consult Gemini CLI as a read-only thinker for second opinions, research, and alternative perspectives.
+# cc-multi-cli-plugin
 
-## Prerequisites
+If you have access to multiple AI coding CLIs (Codex, Gemini, Cursor, Copilot, etc.), this plugin lets Claude Code delegate to whichever one is best for the task — without you having to switch tools or run them yourself.
 
-- [Gemini CLI](https://geminicli.com) installed and authenticated
-- [Claude Code](https://claude.com/claude-code) installed
+Each CLI is wired up through its native protocol (ACP, ASP, JSON-RPC). This allows you to pick and choose all the best features from each CLIs; like /debug mode from Cursor, /research from Copilot, etc... Sessions, streaming, tool calls, and background jobs all work normally.
 
 ## Install
 
-Add this marketplace to Claude Code:
+Paste into Claude Code:
 
 ```
-/plugin marketplace add <your-github-username>/skill-gemini
+/plugin marketplace add https://github.com/greenpolo/cc-multi-cli-plugin
+/plugin install multi@cc-multi-cli-plugin
+/multi:setup
 ```
 
-Then install the plugin:
+`/multi:setup` detects which CLIs you have, installs the matching sub-plugins, and wires Exa + Context7 MCPs into each.
 
-```
-/plugin install skill-gemini
-```
+## Skills Included:
 
-## Usage
+Two skills ship with the plugin:
 
-Ask Claude to consult Gemini on anything:
+- **multi-cli-anything** — adds ANY CLI (Qwen, Aider, OpenCode, anything that speaks ACP) as a subagent that Claude can invoke at will. Claude scaffolds the new plugin in the marketplace.
 
-- "Ask Gemini what it thinks about this approach"
-- "Get a second opinion from Gemini on this architecture"
-- "Have Gemini research X for me"
+- **customize** — change which CLI handles what. *"Make Gemini the writer instead of Cursor."* Claude does the file edits, reinstalls, and tells you what restarts are needed.
 
-The skill uses `gemini-3.1-pro-preview` by default. Request a different model explicitly if needed.
+Just ask Claude in plain English. The skills activate automatically.
 
-## How it works
+## Commands 
 
-The skill runs Gemini CLI in headless mode (`gemini -p "prompt"`), captures the response, and presents it with Claude's own critical evaluation. If Claude spots a clear misunderstanding in Gemini's response, it will automatically follow up for clarification. For subjective disagreements, both perspectives are presented for you to decide.
+| | |
+|---|---|
+| `/gemini:research` | Deep research with Gemini's 1M-token context |
+| `/gemini:explore` | Fast codebase exploration (Gemini 3 Flash) |
+| `/codex:execute` | Hand a plan step to Codex |
+| `/cursor:write` | Bulk code writing |
+| `/cursor:plan` | Design an approach before coding |
+| `/cursor:debug` | Hypothesis-driven debugging |
+| `/copilot:research` | GitHub + web investigation |
+| `/copilot:review` | GitHub-context code review |
+| `/copilot:plan` | Copilot's plan mode |
+
+Claude can also auto-dispatch to these without you typing the command.
+
+All of them are interchangeable, and can be altered to whatever you want using the  /customize skill. 
 
 ## License
 
-MIT
+Apache 2.0. See [NOTICE](NOTICE) for upstream credits.

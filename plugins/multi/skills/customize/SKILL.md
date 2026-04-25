@@ -1,0 +1,273 @@
+---
+name: customize
+description: Rewire which CLI handles which role in cc-multi-cli-plugin. Use when the user asks to swap CLIs, change a subagent's target CLI, add or disable a subagent or command, restrict a CLI, hardcode a model, or modify a role's prompt template. Works for any CLI in the marketplace — the four default CLIs (Codex, Gemini, Cursor, Copilot) and any additional CLIs the user added via the multi-cli-anything skill. Trigger phrases include "swap Gemini and Cursor", "make Copilot the writer", "disable cursor-debugger", "restrict Codex to read-only", "change which CLI handles debugging", "add /<cli>:<command>", "only install the plugins I need", "hardcode a model for <some-role>", "use /plan from copilot for planning".
+---
+
+# Customize cc-multi-cli-plugin
+
+cc-multi-cli-plugin is a **multi-plugin marketplace**: one hub plugin (`multi`) plus one thin plugin per AI CLI the user has wired up. Customization is explicit file edits across those plugins. No runtime config layer.
+
+**This skill is CLI-agnostic.** Every instruction below works for any CLI in the marketplace — the four shipped defaults (Codex, Gemini, Cursor, Copilot) and any CLIs added later via the `multi-cli-anything` skill (OpenCode, Qwen, Aider, etc.). Concrete examples use specific CLI names for clarity, but apply the same pattern to any CLI.
+
+## The shape every customization touches
+
+Three file types, consistent across all CLIs:
+
+| File | Pattern | Produces |
+|---|---|---|
+| Slash-command entry point | `plugins/<cli>/commands/<action>.md` | `/<cli>:<action>` |
+| Subagent (thin forwarder to the companion) | `plugins/multi/agents/<cli>-<role>.md` | `subagent_type: "multi:<cli>-<role>"` |
+| Adapter (CLI-specific transport + `buildPrompt` role→prefix map) | `plugins/multi/scripts/lib/adapters/<cli>.mjs` | What the companion actually invokes |
+
+A customization edits one or more of these. The skill below teaches you which files change for each kind of customization.
+
+## Step 0 — Locate the plugin repo
+
+Before editing anything, determine WHICH files to edit. Three scenarios:
+
+1. **Check `claude plugin marketplace list`** — find the `installLocation` for `cc-multi-cli-plugin`.
+2. **Classify the install:**
+   - If `installLocation` is a local directory the user controls (dev clone, fork they own) — **edit those files directly.** Changes are live.
+   - If `installLocation` is under `~/.claude/plugins/marketplaces/cc-multi-cli-plugin/` and sourced from a GitHub repo the user does NOT own — **edits there will be overwritten** on the next `claude plugin marketplace update`. STOP and tell the user they need to fork the repo, clone their fork, and re-register that clone as the marketplace source.
+3. **Ask the user** if you can't tell which scenario applies.
+
+Record the path you'll edit as `$REPO`. All subsequent file paths are relative to `$REPO`.
+
+## Step 1 — Discover the current inventory (don't rely on memory)
+
+Users may have added CLIs via `multi-cli-anything` that aren't in any documentation. Always run these before planning changes:
+
+```bash
+ls $REPO/plugins/                            # CLI plugins installed
+ls $REPO/plugins/multi/agents/               # subagents
+find $REPO/plugins -name "*.md" -path "*/commands/*"   # commands
+cat $REPO/.claude-plugin/marketplace.json    # marketplace registration
+```
+
+The output is ground truth for what exists. Planning against it avoids the "subagent not found" class of bug.
+
+## Step 2 — Verify CLI-specific strings BEFORE hardcoding them
+
+Before hardcoding any CLI-specific string (model IDs, effort levels, sandbox modes, flag names, slash commands, mode names) as a default, verify it. Do not ask the user to confirm these — Claude can look them up faster.
+
+**The verification-trap:** CLIs often accept version-qualified IDs (`-preview`, `-beta`, `-exp` suffixes). Dropping the suffix produces a runtime 4xx. Gemini's `gemini-3.1-pro-preview` is *not* interchangeable with `gemini-3.1-pro`; the latter 404s. Every CLI has analogous traps.
+
+### Pick ONE source proportional to the question. Stop when confident.
+
+Do NOT run every source for every question. The verification sources form a LADDER — start with the cheapest authoritative one for the question at hand and stop as soon as you have a confident answer.
+
+**Decision tree:**
+
+- **Yes/no capability check** — "does `<cli>` have a `/<slash-command>` command?" or "does `<cli>` support `--read-only`?" → ONE source. Usually `<cli> --help | grep <term>` in well under a second. Done. Don't escalate.
+
+- **Enumerating what exists** — "what slash commands does `<cli>` have?" or "what models does `<cli>` accept?" → ONE source. Try `<cli> --help` first, or a vendor-docs lookup via context7 if `--help` isn't exhaustive. Escalate to a second source only if the first comes up empty or suspicious.
+
+- **Exact canonical ID with version suffix** (e.g., "what's the current stable model ID for Gemini's flash tier?") — up to TWO sources when the answer must be typed into code and a wrong suffix bricks the feature. Prefer (a) asking the CLI itself via a natural-language prompt, then cross-check with (b) vendor docs. Only escalate to reading source constants on disagreement.
+
+### The sources, in the order you'd try them
+
+1. **`<cli> --help`, `<cli> models`, `<cli> about`** — fastest. No network. Free. Authoritative for "what does this binary accept right now." **Default choice for most questions.**
+
+2. **Vendor docs via context7** — `resolve-library-id` → `query-docs`. Good for canonical names, deprecation context, and slash commands not surfaced by `--help`. Use this as the primary fallback when `--help` doesn't answer.
+
+3. **Web search via exa** — for recent changelogs, forum posts, or obscure flags not covered by context7.
+
+4. **CLI source on GitHub** — `config/models.ts` constants, etc. Use when 1–3 disagree or come up empty.
+
+5. **Prompt the CLI itself with `<cli> -p "..."`** — LAST RESORT only. This costs the user API credits and is slow. Don't reach for it for routine customize questions; docs and web search cover 99% of what this skill needs.
+
+### Hard rules
+
+- **Do not invoke `<cli> -p` as a research step** unless sources 1–4 are all empty. For a customize task (small edit, known CLI, verifiable via docs), you almost never need it.
+- **Never ask one CLI about another CLI's features.** Cross-CLI interrogation hallucinates as badly as guessing. Only use a CLI as a source for ITSELF, and even then only as a last resort.
+- **Record the source you used inline in your response** so the user sees which sources you checked.
+- **Claim "unverified" honestly** if a string is rare or sources didn't surface a confident answer. Don't ship guesses as verified facts.
+
+### Resolving disagreements (rare — usually only one source is needed)
+
+- **CLI wins** for "will it work right now."
+- **Docs win** for "should I use this" (deprecation, aliasing).
+
+### Also verify per CLI
+
+- **Slash commands and modes** — vary by CLI and by version; new ones land regularly. Enumerate via the three-source check before referencing one.
+- **Runtime flags** (sandbox modes, effort levels, read-only toggles) — check `--help` for exact spelling.
+- **OS quirks** — Windows `.cmd` shims, shell requirements, PATH differences, path-separator handling.
+- **`plugins/multi/scripts/lib/adapters/<cli>.mjs`** is the source of truth for what flags our companion forwards to the CLI.
+
+**Record findings inline in your response** (so the user can double-check), then proceed to file edits without asking for confirmation on verifiable facts.
+
+## Safety checkpoint before edits
+
+```bash
+cd $REPO && git status && git add -A && git commit -m "checkpoint before customization"
+```
+
+Run this via Bash if the working tree has uncommitted changes. Skip if it's clean.
+
+## Change types (generic, with illustrative examples)
+
+All examples use `<cli>`, `<cli-a>`, `<cli-b>`, `<role>`, `<action>` as placeholders. Substitute the CLI names from your Step 1 inventory.
+
+### 1. Swap a role between two CLIs
+
+*User: "make `<cli-a>` handle `<role>` instead of `<cli-b>`."*
+
+**Edit two files to ADD the new mapping:**
+- `plugins/<cli-a>/commands/<action>.md` — copy from `plugins/<cli-b>/commands/<action>.md`; change the dispatch target to `multi:<cli-a>-<role>`.
+- `plugins/multi/agents/<cli-a>-<role>.md` — copy from `plugins/multi/agents/<cli-b>-<role>.md`; update `name:`, description, and the Bash invocation to `--cli <cli-a> --role <role>`.
+
+**Optionally REMOVE the old mapping:**
+- Delete or `_disabled-`-rename `plugins/<cli-b>/commands/<action>.md` and `plugins/multi/agents/<cli-b>-<role>.md`.
+
+**If the new role doesn't exist in the target adapter's `buildPrompt()`**, add it (see change type #7).
+
+**Illustrative:** user says "make Gemini the writer instead of Cursor."
+→ Create `plugins/gemini/commands/write.md` (dispatching to `multi:gemini-writer`).
+→ Create `plugins/multi/agents/gemini-writer.md` (forwarding to `--cli gemini --role writer`).
+→ Remove or disable the cursor counterparts if Cursor shouldn't write anymore.
+
+### 2. Add a net-new command for an existing CLI
+
+*User: "add `/<cli>:<action>`."*
+
+- **Create** `plugins/<cli>/commands/<action>.md` — dispatches via `Agent` tool to `multi:<cli>-<role>`. Copy any existing command file as a template and adjust.
+- **Create** `plugins/multi/agents/<cli>-<role>.md` — thin forwarder. Copy any existing subagent file; update `name:`, description, and the Bash invocation's `--role <role>` field.
+- **If `<role>` is new to this CLI's adapter**, update `plugins/multi/scripts/lib/adapters/<cli>.mjs`'s `buildPrompt()` to map the new role to whatever slash-command prefix the CLI expects (see change type #7).
+
+**Illustrative:** user says "add `/copilot:plan`" and your verification in Step 2 confirmed Copilot has a `/plan` slash command.
+→ Create `plugins/copilot/commands/plan.md` (dispatching to `multi:copilot-planner`).
+→ Create `plugins/multi/agents/copilot-planner.md` (forwarding with `--cli copilot --role planner`).
+→ Edit `plugins/multi/scripts/lib/adapters/copilot.mjs` to add `planner: "/plan "` to the `buildPrompt()` prefix map.
+
+### 3. Disable a command or subagent
+
+**Command (user-facing slash):**
+- Delete `plugins/<cli>/commands/<action>.md` (git preserves history).
+- OR rename to `_disabled-<action>.md` (Claude Code won't load files starting with underscore).
+
+**Subagent (Claude's auto-dispatch target):**
+- Same approach — delete or underscore-rename in `plugins/multi/agents/`.
+
+### 4. Uninstall CLI plugins you don't need
+
+If the user only wants some of the CLIs, the cleanest customization is no customization: don't install the plugins they skip.
+
+```bash
+claude plugin uninstall <cli>@cc-multi-cli-plugin
+```
+
+`multi` stays installed (the hub is required). CLI plugins are additive and independently installable.
+
+### 5. Restrict a CLI's behavior (read-only, narrower tools, sandboxed)
+
+Edit `plugins/multi/agents/<cli>-<role>.md`:
+- **Frontmatter `tools:`** — narrow to a restricted Bash pattern (e.g., `Bash(echo:*)`) to prevent broader tool use.
+- **Body:** ensure the Bash invocation includes the appropriate restriction flag (`--read-only`, `--no-write`, `--sandbox <mode>`, or whatever that CLI's adapter exposes — verify via Step 2).
+
+Consult `plugins/multi/scripts/lib/adapters/<cli>.mjs` for the flags that CLI's adapter forwards.
+
+### 6. Hardcode a default model (or other flag) for a subagent
+
+Subagent Bash invocations pass `--model` through from the user's request. To bake in a *default* model that applies when the user doesn't specify one, edit the subagent's Bash line to include `--model <name>` unconditionally, and update the forwarding rules to note user overrides win.
+
+**Generic pattern** — edit `plugins/multi/agents/<cli>-<role>.md`'s forwarding rules block. Change:
+
+```markdown
+- Use exactly one `Bash` call to invoke:
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <cli> --role <role> ...`
+- Pass `--model`, `--resume`, `--fresh` as runtime controls.
+```
+
+to:
+
+```markdown
+- Use exactly one `Bash` call to invoke:
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <cli> --role <role> --model <VERIFIED-ID> ...`
+- If the user's request explicitly specifies a different `--model`, use that value instead of `<VERIFIED-ID>`.
+- Pass `--resume`, `--fresh` as runtime controls.
+```
+
+**Illustrative:** pinning `/gemini:research` to Gemini 3.1 Pro. Step 2 verification confirmed the ID is `gemini-3.1-pro-preview` (WITH suffix). The edit pins `--model gemini-3.1-pro-preview` with override rules preserved. Forgetting the `-preview` suffix is the most common way to ship a broken subagent.
+
+The same pattern works for `--effort`, `--sandbox`, `--reasoning-effort`, or any CLI-specific flag.
+
+### 7. Change a role's prompt template (slash-command prefix)
+
+Role-specific prompt prefixes live in each adapter's `buildPrompt()` function in `plugins/multi/scripts/lib/adapters/<cli>.mjs`. Generic shape:
+
+```js
+function buildPrompt(role, userTask) {
+  const prefix = { <role1>: "<cli-slash-command-1> ", <role2>: "<cli-slash-command-2> " }[role] ?? "";
+  return prefix + userTask;
+}
+```
+
+Edit the mapping to change how a role's prompt gets prefixed, or to add a new role mapping. Only touch `buildPrompt()` — other edits to adapter code risk breaking the transport.
+
+## What NOT to touch (unless adding a new transport)
+
+These are shared infrastructure; `multi-cli-anything` is the skill for extending them.
+
+- `plugins/multi/scripts/lib/job-control.mjs`, `state.mjs`, `render.mjs`, `workspace.mjs`, `tracked-jobs.mjs`
+- `plugins/multi/scripts/lib/acp-client.mjs`, `app-server.mjs`, `acp-diagnostics.mjs`
+- `plugins/multi/scripts/multi-cli-companion.mjs` (unless adding a new adapter — use `multi-cli-anything`)
+- `plugins/multi/hooks/hooks.json` (unless adding a new hook)
+
+## Verify after edits — YOU (Claude) run the refresh, not the user
+
+**You execute the refresh commands yourself via Bash.** Do not hand commands to the user to type. The only thing you can't do is restart Claude Code itself; flag that explicitly when it's needed.
+
+**Always run first:**
+
+```bash
+claude plugin validate $REPO
+```
+
+Catches JSON/schema errors before any reinstall. Fix errors and re-run before proceeding.
+
+**Then refresh based on what you touched:**
+
+| What you edited | What you run via Bash | User action required? |
+|---|---|---|
+| Command file (`plugins/<cli>/commands/*.md`) | `claude plugin install <cli>@cc-multi-cli-plugin --force` | None — command changes are live after reinstall |
+| Subagent (`plugins/multi/agents/*.md`) | `claude plugin install multi@cc-multi-cli-plugin --force` | **Yes — user must restart Claude Code.** Subagent definitions are cached at session start. |
+| Adapter / companion script (`plugins/multi/scripts/...`) | Nothing — the companion respawns on each invocation | None |
+| New plugin added to `marketplace.json` | `claude plugin marketplace update cc-multi-cli-plugin` then `claude plugin install <new-plugin>@cc-multi-cli-plugin` | None for the new plugin itself; restart if it has subagents |
+| `plugins/multi/hooks/hooks.json` | `claude plugin install multi@cc-multi-cli-plugin --force` | **Yes — restart** |
+
+## End-to-end workflow Claude follows
+
+1. Step 0: locate `$REPO`.
+2. Step 1: discover current inventory via `ls` / `find`.
+3. Step 2: verify any CLI-specific strings the user mentioned (model IDs, slash commands, modes).
+4. Safety checkpoint commit.
+5. Make file edits per the relevant change type(s).
+6. Run `claude plugin validate $REPO` via Bash.
+7. Run the relevant `claude plugin install ... --force` commands via Bash (one per affected plugin).
+8. Commit the changes via Bash: `cd $REPO && git add -A && git commit -m "customize: <summary>"`.
+9. Report to user:
+   - If subagents or hooks changed: end with *"Please restart Claude Code — [reason]. After restart, try `/<cli>:<action> <test-prompt>` to verify."*
+   - Otherwise: give a test command they can run right now without restart.
+
+Claude restart is the one thing you can't do — don't pretend you can. Reinstalling, validating, and committing are all yours.
+
+## Illustrative walk-through: swap two CLIs' roles
+
+User says: *"Make Gemini the bulk writer and Cursor the researcher."*
+
+1. `claude plugin marketplace list` → confirm `cc-multi-cli-plugin` lives in an editable location.
+2. `ls $REPO/plugins/` → confirm both `gemini/` and `cursor/` plugins exist. `ls $REPO/plugins/multi/agents/` → see current subagent set.
+3. No CLI-specific strings mentioned; skip Step 2 verification.
+4. Safety commit if needed.
+5. Create `plugins/multi/agents/gemini-writer.md` (copy from `cursor-writer.md`, change name and `--cli gemini --role writer`).
+6. Create `plugins/multi/agents/cursor-researcher.md` (copy from `gemini-researcher.md`, change similarly).
+7. Create `plugins/gemini/commands/write.md` (copy from `plugins/cursor/commands/write.md`, change dispatch to `multi:gemini-writer`).
+8. Create `plugins/cursor/commands/research.md` (copy from `plugins/gemini/commands/research.md`, change dispatch to `multi:cursor-researcher`).
+9. Optionally delete or `_disabled-` the originals.
+10. `claude plugin validate $REPO` via Bash — must pass.
+11. `claude plugin install gemini@cc-multi-cli-plugin --force` + cursor + multi, via Bash.
+12. Commit via Bash.
+13. Tell the user: *"Done. Please restart Claude Code — I touched subagent files and the definitions are session-cached. After restart, try `/gemini:write create /tmp/hello.py that prints 'hi'`."*
+
+Substitute any other pair of CLIs and the same steps apply.

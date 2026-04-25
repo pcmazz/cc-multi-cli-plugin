@@ -183,15 +183,11 @@ curl -sS -X POST https://api.exa.ai/search \
 ```
 Expected: `200`. 401/403 → key is bad; ask for a correct one or Skip.
 
-**Context7** (only if a key was provided — empty key is a valid "use free tier" signal):
-```bash
-curl -sS https://context7.com/api/v1/health \
-  -H "Authorization: Bearer <KEY>" \
-  -w "\n%{http_code}" | tail -1
-```
-Expected: `200`. 401/403 → key bad; ask for correction or Skip. The "key was valid yesterday but is wrong today" case is real (rotation, expired) — catching it here saves a future debug session.
+**Context7:** do NOT validate via HTTP probe. The previously-suggested `context7.com/api/v1/health` endpoint returns 400 even with a valid key (the endpoint shape is wrong / has moved). We don't have a reliable cheap probe for Context7 keys right now. Just trust the user's input and let key validity surface on first real use of `/gemini:research` / `/copilot:research`. The cost of a wrong-key Context7 is one failed research call, recoverable; the cost of a 400-on-every-setup-run is a bad UX every time.
 
-If a key fails validation, do NOT proceed to write it to any config file.
+If you want to confirm the key looks like the right SHAPE before writing it, do a lightweight format check: `ctx7sk-` prefix + UUID-ish body. That catches typos without burning a real probe.
+
+If a key fails Exa validation, do NOT proceed to write it to any config file. Context7 keys are written without validation.
 
 ### Step 3d — Save
 
@@ -208,7 +204,30 @@ Create the directory with `Bash` if it doesn't exist. **File permissions:** on U
 
 Never echo either key back after capture — just confirm "Saved." If the user skipped a key, store an empty string (Step 4 treats empty-string as the "omit env block" signal).
 
-## Step 4 — Configure MCPs per CLI
+## Step 3.5 — One-time migration from v1 (only if needed)
+
+Older versions of this skill wrote `_cc_multi_managed: true` marker keys inside `mcpServers` entries. That's been deprecated (it broke Gemini's schema validator). On the FIRST re-run after upgrading, those markers need to be stripped from any CLI config that has them.
+
+Detect by reading each CLI's config and grepping for `_cc_multi_managed`. If found, announce ONCE up front: *"Migrating from v1 marker-key tracking to v2 managed-servers.json — will strip stale markers from <list of files>."* Then strip them inline as part of Step 4's audit. Don't repeat the announcement per-CLI. After this one-time pass on all v1 users, this code path becomes dead — it's intentional migration debt, not ongoing audit work.
+
+## Step 3.7 — Fast-path early bail
+
+Most re-runs of `/multi:setup` are "everything still matches canonical, nothing to do." Don't make those re-runs do 30 seconds of probes + audits + reports. Run this cheap check first:
+
+1. Plugin's `config.json` has both keys (or empty-strings for declined ones).
+2. `~/.claude/plugins/cc-multi-cli-plugin/managed-servers.json` exists.
+3. For each CLI listed in `managed-servers.json`, the live config file contains the expected server entries (`exa`, `context7`) with credentials matching `config.json`'s canonical values, and no stale `_cc_multi_managed` markers.
+4. No conflicting same-purpose servers (Exa-purpose / Context7-purpose) exist beyond the canonical entries.
+
+If ALL of the above are true → print:
+
+> *"`/multi:setup` quick check: all CLI configs match canonical state. Nothing to do. (Re-run with `--full` to force re-audit.)"*
+
+…and exit. Steady-state re-runs finish in < 5 seconds.
+
+If any check fails → fall through to Step 4 (full audit + reconcile).
+
+## Step 4 — Configure MCPs per CLI (audit + reconcile)
 
 For each installed, authenticated CLI, do the following:
 
@@ -218,12 +237,14 @@ For each installed, authenticated CLI, do the following:
    - Cursor: `~/.cursor/mcp.json` (create if missing as `{ "mcpServers": {} }`)
    - Copilot: `~/.copilot/mcp-config.json` (create if missing as `{ "mcpServers": {} }`)
 
-2. **Back up the existing file** with mtime-aware rotation:
-   - If `<file>.bak` doesn't exist → create it.
-   - If `<file>.bak` exists AND its mtime is older than the live `<file>`'s mtime → the existing `.bak` is stale (predates the current state). Rotate it: rename existing `<file>.bak` to `<file>.bak.<YYYYMMDD-HHMMSS>` (timestamped), then create a fresh `<file>.bak` from the current live file.
-   - If `<file>.bak` exists AND its mtime is ≥ live `<file>`'s mtime → already current; skip.
+2. **Back up the existing file ONLY when an edit is about to happen.** Defer this step until after the audit (substep 3 below) determines that an edit IS required. Skipping the backup when no edit will land avoids stomping on a perfectly-good `.bak` for nothing.
 
-   **Why mtime rotation matters:** the prior "create only if not present" rule produced stale backups after re-runs — Step 6's "restore by copying .bak back" instruction could undo the user's managed entries. Mtime rotation guarantees `.bak` always reflects state immediately before the current run's edits.
+   When the audit confirms an edit is required, then:
+   - If `<file>.bak` doesn't exist → create from current live file.
+   - If `<file>.bak` exists AND its mtime is older than the live `<file>` → rotate stale `.bak` to `<file>.bak.<YYYYMMDD-HHMMSS>` (timestamped), create fresh `.bak` from current live file.
+   - If `<file>.bak` exists AND its mtime is ≥ live `<file>` → already current; reuse it (the live file hasn't changed since last backup).
+
+   **Why this matters:** the original "create on every run" rule overwrote good backups in steady-state re-runs. The "deferred + mtime-aware" rule means `.bak` reflects the state immediately before THIS run's edits, every time, with no churn on no-op runs.
 
 3. **AUDIT existing managed entries first, then merge.** This is NOT a one-shot "additive merge" — re-runs of `/multi:setup` need to detect drift from prior versions of this skill (e.g., stale `_cc_multi_managed: true` marker keys that break Gemini's schema validator). Audit pass:
 
@@ -299,11 +320,18 @@ For each installed, authenticated CLI, do the following:
    - If "Keep yours", skip adding our entry for this CLI+server; continue with the other server. If "Replace", remove the existing entry and add ours.
    - Name-level collision (user has a server literally named `exa` or `context7`) is the same flow — not special.
 
-   **Dual-credential drift** (multiple servers, same purpose, different keys): If the audit detects MULTIPLE Exa-purpose entries (e.g., both `exa` and `exa-websearch` present) AND their credentials differ (different `EXA_API_KEY` values, or one uses a key in args/URL while the other uses env), report the drift explicitly:
+   **Multiple same-purpose servers** (e.g., both `exa` and `exa-websearch` present): some users intentionally configure multiple transports for the same purpose (one stdio for offline-use + one HTTP for speed) — that's not always drift. Don't assume.
 
-   *"Found two Exa servers with different credentials: `exa` (key ending …a3adec) and `exa-websearch` (key ending …b254f3). Only one of these is correct."*
+   Report the finding neutrally:
 
-   Ask via `AskUserQuestion`: "Consolidate to canonical (use the key from `~/.claude/plugins/cc-multi-cli-plugin/config.json`, drop the duplicate)" / "Keep both" / "Skip — investigate manually". Don't silently merge alongside; that's how dual-credential drift accumulated invisibly in the first place.
+   > *"Found two Exa-purpose servers: `exa` (stdio, key ending …a3adec) and `exa-websearch` (HTTP, key ending …b254f3). They use different keys. This may be intentional (two transports) or accidental drift."*
+
+   Ask via `AskUserQuestion`:
+   - **"Intentional — leave both as configured"** (no action; user knows what they have)
+   - **"Drift — consolidate to canonical (drop the non-canonical entry)"**
+   - **"Skip — investigate manually"**
+
+   Don't default to "consolidate" — both options are legitimate. The wizard's job is to surface the situation, not pick.
 
    **`npx` vs `httpUrl`:** the plugin's default is `npx -y <package>` (stdio transport) for consistency across systems and for cases where the user is offline after first fetch. An existing HTTP transport (e.g., `httpUrl: "https://mcp.context7.com/mcp"`) is legitimate and often faster. Do not present npx as objectively better — when the user has an HTTP version, the "Keep yours" option is reasonable.
 
@@ -396,7 +424,14 @@ Next steps:
 
 ## Dry-run mode
 
-If `--dry-run` was in `$ARGUMENTS`, skip steps 3–5's writes entirely. Instead, print what WOULD be changed in each file and exit.
+If `--dry-run` was in `$ARGUMENTS`, **skip writes only — run all reads and probes.** Specifically:
+
+- DO run: CLI detection (Step 1), plugin install state check (1.5), PATH check (1.7), auth checks (Step 2), key discovery (3a), key validation curl probes (3c — they're read-only HTTP), audit / drift detection (Step 4 substep 3), Step 5 verification probes, Step 6 key inventory scan.
+- DO NOT run: any file write, any `claude plugin install`, any PATH edit, any `.bak` creation/rotation, any creation of `managed-servers.json`.
+
+Report what WOULD be changed (or "no change") for each file. The dry-run report should give the user enough signal to decide whether to run for real.
+
+Avoid `ls <optional-file>` or similar to test for existence — non-zero exit can torpedo parallel command batches via shell error handling. Prefer `[ -f <path> ]` or `test -f <path>` which always returns cleanly.
 
 ## Error handling
 

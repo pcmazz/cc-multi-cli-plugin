@@ -190,7 +190,10 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
       cwd: this.cwd,
       env: this.options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
-      shell: process.platform === "win32" ? (process.env.SHELL || true) : false,
+      // On Windows, always use cmd.exe (shell: true) — never honor
+      // process.env.SHELL. Git Bash mangles Windows-style switches via MSYS
+      // path translation, breaking native Windows binaries.
+      shell: process.platform === "win32",
       windowsHide: true
     });
 

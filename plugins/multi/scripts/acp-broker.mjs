@@ -83,12 +83,13 @@ let activeClient = null;
 
 function spawnAcpProcess(cwd) {
   // On Windows, `gemini` is a `.cmd` shim that needs shell expansion to launch.
-  // Match the platform-conditional shell pattern used in scripts/lib/app-server.mjs.
+  // Always use cmd.exe (shell: true) — never honor process.env.SHELL, since
+  // Git Bash mangles Windows-style switches via MSYS path translation.
   const child = spawn("gemini", ["--acp"], {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: process.env,
-    shell: process.platform === "win32" ? (process.env.SHELL || true) : false,
+    shell: process.platform === "win32",
     windowsHide: true
   });
 

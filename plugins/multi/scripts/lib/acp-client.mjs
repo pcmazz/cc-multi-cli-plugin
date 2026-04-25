@@ -320,10 +320,14 @@ export class SpawnedAcpClient extends AcpClientBase {
 
     const pid = this.proc?.pid;
     if (this.proc?.stdin) {
-      this.proc.stdin.end();
+      try {
+        this.proc.stdin.end();
+      } catch {
+        // stdin may already be closed.
+      }
     }
 
-    // Give a grace period, then force kill.
+    // Give a brief grace period, then force kill the process tree.
     if (pid) {
       setTimeout(() => {
         try {
@@ -334,7 +338,20 @@ export class SpawnedAcpClient extends AcpClientBase {
       }, 50).unref?.();
     }
 
+    // Last-resort hard timeout: if the child still hasn't emitted "exit"
+    // 3s after the kill attempt, give up waiting and synthesize an exit so
+    // callers (notably runAcpPrompt's finally block) don't hang forever.
+    // This guards against rare cases where taskkill silently fails or the
+    // proc handle never receives the "exit" event.
+    const fallbackTimer = setTimeout(() => {
+      if (!this.exitResolved) {
+        this.handleExit(new Error("ACP child did not exit within 3s of close(); abandoning."));
+      }
+    }, 3050);
+    fallbackTimer.unref?.();
+
     await this.exitPromise;
+    clearTimeout(fallbackTimer);
   }
 
   sendMessage(message) {

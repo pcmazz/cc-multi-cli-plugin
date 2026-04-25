@@ -2,6 +2,10 @@ import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 export function runCommand(command, args = [], options = {}) {
+  // On Windows, always use cmd.exe (shell: true) — never honor process.env.SHELL.
+  // Git Bash sets SHELL to bash.exe, and bash's MSYS path translation mangles
+  // Windows-style switches like /PID into "C:/Program Files/Git/PID", which
+  // breaks taskkill, where, and other native Windows binaries.
   const result = spawnSync(command, args, {
     cwd: options.cwd,
     env: options.env,
@@ -9,7 +13,7 @@ export function runCommand(command, args = [], options = {}) {
     input: options.input,
     maxBuffer: options.maxBuffer,
     stdio: options.stdio ?? "pipe",
-    shell: process.platform === "win32" ? (process.env.SHELL || true) : false,
+    shell: process.platform === "win32",
     windowsHide: true
   });
 

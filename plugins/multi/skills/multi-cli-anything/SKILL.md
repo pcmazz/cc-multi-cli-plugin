@@ -21,7 +21,37 @@ Before writing any code, pull everything you need to know about the CLI so you d
 
 **Pick sources proportional to the question.** Do NOT run every source for every fact. Start cheap and authoritative; escalate only if unclear.
 
-Preferred order per question:
+### First: search for an existing Claude Code integration of this CLI
+
+Before doing anything else, **search exa for an existing implementation**. The community has wired up many CLIs already (Cursor's ACP adapter, the Gemini plugin port, etc.) — finding one collapses days of trial-and-error into "read their adapter, adapt to our marketplace structure."
+
+Useful queries (try in this order, stop when you find a working example):
+
+```
+<cli-name> claude code plugin
+<cli-name> ACP adapter
+<cli-name> claude-code marketplace
+<cli-name> agent client protocol
+<cli-name> @anthropic-ai claude
+```
+
+A reference implementation reveals things probes don't:
+
+- **Spawn quirks** — does the CLI need `shell: true` on Windows? A specific env var to init?
+- **ACP protocol completeness** — many "ACP-supporting" CLIs implement the protocol incompletely; an existing adapter shows what edge cases break.
+- **Auth flow specifics** — env vars, token paths, OAuth dance details.
+- **Model ID conventions** — version suffixes, deprecated aliases. (Gemini's `-preview` suffix trap is the canonical example.)
+- **Schema-validation pitfalls** — does the CLI's config reject unknown keys? Strict-mode JSON?
+
+If you find one:
+1. Read its full adapter implementation. Note any "this CLI is weird about X" comments.
+2. Note any pre-handshake config it requires (extra params in the `initialize` call, custom auth methods, etc.).
+3. Cite the source in your file (NOTICE attribution, plus a comment in the new adapter).
+4. Adapt — don't blindly copy. Our marketplace structure differs from theirs; the principles transfer, the file paths don't.
+
+If you don't find one (or it's stale / not maintained), proceed with the verification ladder below. Looking is cheap; not looking is how you spend 4 hours debugging an ACP handshake that needed one specific param.
+
+### Verification sources, in order of cost/authority
 
 1. **`<cli> --help`, `<cli> models`, `<cli> about`** — fastest, no network, authoritative for "what does this binary accept right now."
 2. **Prompt the CLI itself** (when no listing subcommand exists):

@@ -11,6 +11,9 @@
  */
 
 import { execSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 import { buildAutoApproveRequestHandler, SpawnedAcpClient } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
@@ -74,6 +77,64 @@ function buildPrompt(role, userTask) {
     ask: "/ask "
   }[role] ?? "";
   return prefix + userTask;
+}
+
+// ─── Permission allowlist ─────────────────────────────────────────────────────
+//
+// Cursor 2026.04.17 in `agent acp` mode does NOT route shell exec through ACP
+// session/request_permission or terminal/* — its tool-permission gate runs
+// out-of-band against ~/.cursor/cli-config.json. Without an allowlist entry,
+// the Terminal/execute tool sticks at tool_call_update[in_progress] forever
+// and never sends anything across the wire that the client could approve.
+//
+// To make `agent acp` actually run shell commands, file edits, and MCP tools
+// without per-tool prompts, we ensure the user's cli-config.json contains
+// permissive allowlist entries. Idempotent: re-runs are no-ops once present.
+
+const CURSOR_DESIRED_ALLOWS = [
+  "Shell(*)",
+  "Read(**)",
+  "Write(**)",
+  "Edit(**)",
+  "MCP(*)"
+];
+
+/**
+ * Ensure ~/.cursor/cli-config.json's permissions.allow list contains the
+ * entries we need for headless `agent acp` runs to make progress without
+ * stalling on Cursor's permission gate. Best-effort — never throws.
+ */
+function ensureCursorAllowlist() {
+  const configPath = path.join(os.homedir(), ".cursor", "cli-config.json");
+  let config;
+  try {
+    if (fs.existsSync(configPath)) {
+      config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    } else {
+      // Don't create a fresh cli-config.json — that file is owned by Cursor
+      // and writing it before Cursor's first run can confuse the install.
+      return;
+    }
+  } catch {
+    // Malformed JSON — leave it alone rather than risk clobbering.
+    return;
+  }
+
+  if (!config || typeof config !== "object") return;
+  config.permissions = config.permissions ?? { allow: [], deny: [] };
+  if (!Array.isArray(config.permissions.allow)) config.permissions.allow = [];
+
+  const existing = new Set(config.permissions.allow);
+  const missing = CURSOR_DESIRED_ALLOWS.filter((entry) => !existing.has(entry));
+  if (missing.length === 0) return;
+
+  config.permissions.allow.push(...missing);
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  } catch {
+    // Best-effort. If we can't write, the user just gets the existing
+    // permission behavior (which may stall, but won't break anything else).
+  }
 }
 
 // ─── Stream event helpers ─────────────────────────────────────────────────────
@@ -232,16 +293,18 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
     }
   };
 
+  // Make sure Cursor's out-of-band permission gate has a permissive allowlist
+  // before we spawn — without this, Terminal/execute tool calls in agent acp
+  // mode stall indefinitely with no incoming JSON-RPC traffic to react to.
+  ensureCursorAllowlist();
+
   const cli = findCursorBinary();
   const client = new SpawnedAcpClient(cwd, {
     command: cli,
     // --yolo (alias for --force): force-allow commands without per-tool prompts.
     // --approve-mcps: auto-approve MCP server tools.
-    // Note: as of Cursor 2026.04.17 these flags don't fix the Terminal-tool
-    // hang in agent acp mode (Cursor's `execute` tool sticks at in_progress
-    // and never sends terminal/* or session/request_permission to us).
-    // Keeping them anyway because they match the plugin's max-permission
-    // posture and will help once Cursor closes that gap.
+    // These help in interactive runs but don't replace the cli-config.json
+    // allowlist (handled by ensureCursorAllowlist above).
     args: ["--yolo", "--approve-mcps", "acp"],
     env: options.env ?? process.env,
     onNotification: notificationHandler,

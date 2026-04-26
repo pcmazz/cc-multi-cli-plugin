@@ -346,11 +346,12 @@ class AcpClientBase {
   async handshake() {
     const result = await this.request("initialize", {
       protocolVersion: 1,
-      // Declaring `terminal: true` lets agents like Cursor in /debug mode
-      // run shell commands via terminal/* methods (handled by us via spawn).
-      // Without this, Cursor's "Terminal" tool sticks in_progress forever.
-      // Read/write fs ops are NOT delegated to us — agents handle them
-      // internally — so we don't declare fs capabilities.
+      // Declare `terminal: true` so any agent that uses the standard ACP
+      // terminal/* RPCs (and we have handlers for them) can route shell
+      // exec through us. Cursor 2026.04.17 doesn't actually use those
+      // RPCs in agent acp mode — its tool-permission gate runs out-of-band
+      // and is configured via ~/.cursor/cli-config.json (see
+      // ensureCursorAllowlist in adapters/cursor.mjs).
       clientCapabilities: {
         terminal: true
       },

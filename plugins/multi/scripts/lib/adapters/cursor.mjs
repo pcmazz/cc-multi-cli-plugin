@@ -237,8 +237,11 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
     command: cli,
     // --yolo (alias for --force): force-allow commands without per-tool prompts.
     // --approve-mcps: auto-approve MCP server tools.
-    // Without these, tool calls (file edits, shell exec, MCP) hang waiting for
-    // an interactive approval that ACP cannot provide.
+    // Note: as of Cursor 2026.04.17 these flags don't fix the Terminal-tool
+    // hang in agent acp mode (Cursor's `execute` tool sticks at in_progress
+    // and never sends terminal/* or session/request_permission to us).
+    // Keeping them anyway because they match the plugin's max-permission
+    // posture and will help once Cursor closes that gap.
     args: ["--yolo", "--approve-mcps", "acp"],
     env: options.env ?? process.env,
     onNotification: notificationHandler,
@@ -259,10 +262,8 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
       sessionId = session?.sessionId ?? null;
     }
 
-    // Explicitly set the ACP mode based on the role. The default mode may be
-    // restricted (no tool execution), which causes tool_call notifications to
-    // stick in "in_progress" forever and the prompt to hang.
-    //   debugger / writer → "agent" (full tool access)
+    // Explicitly set the ACP mode based on the role. Map:
+    //   writer / debugger → "agent" (full tool access)
     //   planner           → "plan"  (Plan mode, read-only design)
     //   ask               → "ask"   (read-only Q&A)
     {

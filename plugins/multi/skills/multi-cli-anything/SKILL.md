@@ -146,6 +146,33 @@ Edit `plugins/multi/scripts/multi-cli-companion.mjs`:
 4. Extend `buildTaskRunMetadata`'s label map so jobs get a CLI-specific title.
 5. Syntax-check: `node --check plugins/multi/scripts/multi-cli-companion.mjs`.
 
+### Step 3.5 — Verify ACP behavior empirically
+
+ACP is a standard, but every CLI implements it slightly differently. The contract a CLI advertises in `--help` doesn't always match what its `acp` mode actually does. Before declaring the integration done, run a real prompt that exercises the tools the user will rely on (shell exec, file writes, MCP, web search) and watch the wire.
+
+Set `ACP_TRACE=1` and check a real run end-to-end:
+
+```bash
+ACP_TRACE=1 node plugins/multi/scripts/multi-cli-companion.mjs task \
+  --cli <new-cli> --role <role> --write \
+  "Run \`echo hello\`, then write a file, then call an MCP tool."
+```
+
+Then look at stderr for incoming JSON-RPC traffic from the agent. The `[acp-trace] <- REQ <method>` lines tell you which client-side ACP methods the agent expects you to provide; `<- NOTIF session/update[<kind>]` lines show streaming progress.
+
+Things to verify (don't have to be in order — just check whichever is relevant for what the user wants this CLI to do):
+
+- **Permission gate.** Does the agent send `session/request_permission` over ACP, or does it gate tool use through some out-of-band mechanism (a config file, a flag, a pre-approval list)? If you see `tool_call_update` go to `in_progress` and never `completed` with no incoming REQs, it's almost always an out-of-band gate. (Cursor, for example, uses `~/.cursor/cli-config.json`'s `permissions.allow` array — see `ensureCursorAllowlist` in `cursor.mjs`.)
+- **Terminal handling.** Some agents implement `terminal/*` RPCs themselves (just declare `clientCapabilities.terminal=true` in the handshake and `acp-client.mjs`'s `buildAutoApproveRequestHandler` services them). Others run terminals internally and skip ACP entirely. Watching for `<- REQ terminal/create` tells you which.
+- **MCP wiring.** `session/new` accepts an `mcpServers` array, but some agents silently ignore it in ACP mode (Cursor staff has confirmed this for `agent acp`). If the agent reports your MCP tools as missing, see if the CLI has a per-CLI MCP config file (e.g. `~/.cursor/mcp.json`) you should populate instead.
+- **Mode setting.** `session/set_mode` semantics vary: for Cursor, "agent" gives full tool access while "plan"/"ask" restrict it; for Gemini, the equivalent is `approvalMode: "yolo"` for max permissions. Try setting and not setting it during testing.
+- **CLI-side flags.** A CLI's interactive `--yolo` / `--force` / `--approve-mcps` flags often **don't apply to ACP mode** — they're for the interactive REPL or `-p` print mode. Don't assume they're a fix; verify on the wire.
+- **Version sensitivity.** The same CLI can change behavior across builds (e.g. Cursor 2026.04.14 → 2026.04.17 broke MCP tool use in ACP). If something works locally and breaks in the field, check version specifics.
+
+**The Cursor adapter is the worked example for everything above.** When in doubt, read `plugins/multi/scripts/lib/adapters/cursor.mjs` end-to-end — it shows the full set of workarounds that actually shipped: handshake capability declaration, mode-setting per role, allowlist file injection, version-specific warnings, and spawn flags. Adapt the patterns that apply to the new CLI; not all of them will.
+
+For straightforward CLIs (clean ACP impl, no out-of-band gates), most of the above will be no-ops and the basic adapter scaffold from Step 2 will just work. Don't add guards for problems the CLI doesn't have.
+
 ### Step 4 — Add subagents for each role
 
 Create one subagent file per role in `plugins/multi/agents/<new-cli>-<role>.md`:

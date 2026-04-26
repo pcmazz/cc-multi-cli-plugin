@@ -46,6 +46,18 @@ Claude can also auto-dispatch to these without you typing the command.
 
 All of them are interchangeable, and can be altered to whatever you want using the  /customize skill. 
 
+## Known issues
+
+These are upstream CLI bugs the plugin can't fully fix, but works around where possible. If you hit something not listed, set `ACP_TRACE=1` and check stderr — that reveals which JSON-RPC traffic is or isn't crossing the wire.
+
+- **Cursor `agent acp` 2026.04.17 — Terminal/MCP regression.** The `Terminal` (execute) tool can stick at `in_progress` forever, and MCP tools silently fail. Cursor staff has acknowledged it. The plugin auto-injects a permissive allowlist into `~/.cursor/cli-config.json` which keeps simple shell exec working; complex multi-tool runs may still hang. To pin an older Cursor build: `export CURSOR_AGENT_PATH=<path-to-old-build>`. ([forum](https://forum.cursor.com/t/cursor-agent-cli-mcp-tool-calls-silently-stopped-working-in-2026-04-17/158988))
+
+- **Cursor `agent acp` — `mcpServers` ignored.** MCP servers passed via ACP `session/new` are silently dropped in `agent acp` mode (per Cursor staff). The plugin still wires them — they're consumed correctly by Gemini, Copilot, and Qwen — and falls back to Cursor's own `~/.cursor/mcp.json` for Cursor. ([forum](https://forum.cursor.com/t/mcp-servers-passed-via-session-new-dont-work-in-acp-mode/153823))
+
+- **Cursor `agent acp` — `session/request_permission` not sent.** Cursor's permission gate runs out-of-band against `cli-config.json` instead of the ACP-standard request flow. The plugin handles both paths (auto-approve and allowlist injection). ([forum](https://forum.cursor.com/t/acp-permission-rejection-not-reported-to-client/153825))
+
+When upstream CLIs fix any of the above, the plugin needs no changes — the workarounds become benign.
+
 ## License
 
 Apache 2.0. See [NOTICE](NOTICE) for upstream credits.

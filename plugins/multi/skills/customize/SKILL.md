@@ -205,6 +205,17 @@ function buildPrompt(role, userTask) {
 
 Edit the mapping to change how a role's prompt gets prefixed, or to add a new role mapping. Only touch `buildPrompt()` — other edits to adapter code risk breaking the transport.
 
+## Operator escape hatches (for diagnosing or working around upstream CLI issues)
+
+When a CLI misbehaves upstream — a broken release, a regression, an obscure config requirement — these env vars and config files give the user direct control without code changes:
+
+- **`CURSOR_AGENT_PATH=<absolute-path>`** — point our Cursor adapter at a specific binary (e.g. an older cached build at `~/AppData/Local/cursor-agent/versions/<old-version>/index.js`). Useful when a new Cursor release breaks ACP and the user wants to pin a working older one. The `findCursorBinary()` helper checks this before falling back to PATH.
+- **`ACP_TRACE=1`** — turns on `[acp-trace] <- REQ/RES/NOTIF <method>` lines on stderr for any ACP-based CLI invocation. Single most useful diagnostic when an agent silently hangs — tells you exactly what JSON-RPC traffic is or isn't crossing the wire. Off by default.
+- **`~/.cursor/cli-config.json` `permissions.allow`** — Cursor's out-of-band tool gate. Our `ensureCursorAllowlist()` auto-injects `Shell(*)`, `Read(**)`, `Write(**)`, `Edit(**)`, `MCP(*)`. Users can tighten or extend that list (idempotent — we only ever append). If a user wants stricter shell sandboxing, edit the array directly; we won't fight them.
+- **Per-CLI MCP config files** (`~/.gemini/settings.json`, `~/.cursor/mcp.json`, `~/.copilot/mcp-config.json`) — when a CLI ignores `mcpServers` passed via ACP `session/new` (Cursor in `agent acp` mode does, per Cursor staff), populate the CLI's own config file as a fallback.
+
+These are knobs the user can twist; the adapter code reads them automatically. Surface them in the user-facing answer when an upstream CLI bug is the root cause.
+
 ## What NOT to touch (unless adding a new transport)
 
 These are shared infrastructure; `multi-cli-anything` is the skill for extending them.

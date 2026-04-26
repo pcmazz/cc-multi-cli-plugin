@@ -79,6 +79,37 @@ function buildPrompt(role, userTask) {
   return prefix + userTask;
 }
 
+// ─── Known-bad version warning ────────────────────────────────────────────────
+//
+// Cursor 2026.04.17-787b533 has a documented regression: MCP tool calls and
+// the Terminal (execute) tool both silently break in agent acp mode. We can't
+// fix it from the client; we just want users to know about it instead of
+// spending hours debugging mysterious hangs.
+//
+// Forum threads:
+//   https://forum.cursor.com/t/cursor-agent-cli-mcp-tool-calls-silently-stopped-working-in-2026-04-17/158988
+//   https://forum.cursor.com/t/acp-permission-rejection-not-reported-to-client/153825
+//
+// Auto-quiet on any other version. Warning fires once per process.
+
+const KNOWN_BROKEN_CURSOR_VERSIONS = new Set(["2026.04.17-787b533"]);
+let warnedAboutCursorVersion = false;
+
+function maybeWarnAboutCursorVersion(versionString) {
+  if (warnedAboutCursorVersion) return;
+  if (!versionString) return;
+  const v = String(versionString).trim();
+  if (!KNOWN_BROKEN_CURSOR_VERSIONS.has(v)) return;
+  warnedAboutCursorVersion = true;
+  process.stderr.write(
+    `[cursor] Note: agent ${v} has known ACP regressions — ` +
+    `Terminal/execute tool calls and MCP tools may stall in agent acp mode. ` +
+    `cli-config.json allowlist (auto-injected) keeps simple shell exec working; ` +
+    `complex multi-tool runs may still hang upstream. Pin an older build via ` +
+    `CURSOR_AGENT_PATH if needed; otherwise wait for the next Cursor release.\n`
+  );
+}
+
 // ─── Permission allowlist ─────────────────────────────────────────────────────
 //
 // Cursor 2026.04.17 in `agent acp` mode does NOT route shell exec through ACP
@@ -298,14 +329,19 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
   // mode stall indefinitely with no incoming JSON-RPC traffic to react to.
   ensureCursorAllowlist();
 
+  // Surface the 2026.04.17 regression once if detected.
+  maybeWarnAboutCursorVersion(getCursorAvailability().version);
+
   const cli = findCursorBinary();
   const client = new SpawnedAcpClient(cwd, {
     command: cli,
-    // --yolo (alias for --force): force-allow commands without per-tool prompts.
-    // --approve-mcps: auto-approve MCP server tools.
-    // These help in interactive runs but don't replace the cli-config.json
-    // allowlist (handled by ensureCursorAllowlist above).
-    args: ["--yolo", "--approve-mcps", "acp"],
+    // --yolo (alias for --force): force-allow commands without per-tool prompts
+    // in interactive mode. Cursor staff confirmed it does NOT apply to ACP-mode
+    // tool gates, but it's harmless and the allowlist (ensureCursorAllowlist
+    // above) is what actually unblocks tool execution. We dropped
+    // --approve-mcps which was confirmed dead in ACP mode per the same source:
+    //   https://forum.cursor.com/t/mcp-servers-passed-via-session-new-dont-work-in-acp-mode/153823
+    args: ["--yolo", "acp"],
     env: options.env ?? process.env,
     onNotification: notificationHandler,
     onDiagnostic: diagnosticHandler,

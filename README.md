@@ -2,6 +2,12 @@
 
 # cc-multi-cli-plugin
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/greenpolo/cc-multi-cli-plugin?include_prereleases&sort=semver&label=release)](https://github.com/greenpolo/cc-multi-cli-plugin/releases)
+[![Built for Claude Code](https://img.shields.io/badge/built_for-Claude_Code-d97757)](https://docs.anthropic.com/en/docs/claude-code)
+[![CLIs supported](https://img.shields.io/badge/CLIs-Codex_·_Gemini_·_Cursor_·_Copilot_·_Qwen-555)](#commands)
+[![Stars](https://img.shields.io/github/stars/greenpolo/cc-multi-cli-plugin?style=social)](https://github.com/greenpolo/cc-multi-cli-plugin/stargazers)
+
 If you have access to multiple AI coding CLIs (Codex, Gemini, Cursor, Copilot, etc.), this plugin lets Claude Code delegate to whichever one is best for the task — without you having to switch tools or run them yourself.
 
 Each CLI is wired up through its native protocol (ACP, ASP, JSON-RPC). This allows you to pick and choose all the best features from each CLIs; like /debug mode from Cursor, /research from Copilot, etc... Sessions, streaming, tool calls, and background jobs all work normally.

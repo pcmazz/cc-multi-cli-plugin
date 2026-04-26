@@ -1,11 +1,16 @@
 {
   "name": "codex",
   "description": "Delegate plan execution to Codex CLI via ASP. Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": {
     "name": "greenpolo",
     "url": "https://github.com/greenpolo"
   },
   "license": "Apache-2.0",
-  "keywords": ["claude-code", "codex", "execute", "asp"]
+  "keywords": [
+    "claude-code",
+    "codex",
+    "execute",
+    "asp"
+  ]
 }

@@ -6,49 +6,61 @@
   },
   "metadata": {
     "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Gemini, Cursor, and GitHub Copilot CLIs from Claude Code.",
-    "version": "2.0.0"
+    "version": "2.0.1"
   },
   "plugins": [
     {
       "name": "multi",
       "description": "Hub — companion runtime, subagents, setup wizard, customization skills. Install first.",
-      "version": "2.0.0",
-      "author": { "name": "greenpolo" },
+      "version": "2.0.1",
+      "author": {
+        "name": "greenpolo"
+      },
       "source": "./plugins/multi"
     },
     {
       "name": "gemini",
       "description": "Adds /gemini:explore (Gemini 3 Flash, fast code ingestion) and /gemini:research (Gemini 3.1 Pro, deep external research). Requires multi.",
-      "version": "2.0.0",
-      "author": { "name": "greenpolo" },
+      "version": "2.0.1",
+      "author": {
+        "name": "greenpolo"
+      },
       "source": "./plugins/gemini"
     },
     {
       "name": "codex",
       "description": "Adds /codex:execute. Requires multi.",
-      "version": "2.0.0",
-      "author": { "name": "greenpolo" },
+      "version": "2.0.1",
+      "author": {
+        "name": "greenpolo"
+      },
       "source": "./plugins/codex"
     },
     {
       "name": "cursor",
       "description": "Adds /cursor:write, /cursor:plan, /cursor:debug. Requires multi.",
-      "version": "2.0.0",
-      "author": { "name": "greenpolo" },
+      "version": "2.0.1",
+      "author": {
+        "name": "greenpolo"
+      },
       "source": "./plugins/cursor"
     },
     {
       "name": "copilot",
       "description": "Adds /copilot:research, /copilot:review. Requires multi.",
-      "version": "2.0.0",
-      "author": { "name": "greenpolo" },
+      "version": "2.0.1",
+      "author": {
+        "name": "greenpolo"
+      },
       "source": "./plugins/copilot"
     },
     {
       "name": "qwen",
       "description": "Adds /qwen:write (Qwen3-Coder via Qwen Code CLI ACP). Requires multi.",
-      "version": "2.0.0",
-      "author": { "name": "greenpolo" },
+      "version": "2.0.1",
+      "author": {
+        "name": "greenpolo"
+      },
       "source": "./plugins/qwen"
     }
   ]

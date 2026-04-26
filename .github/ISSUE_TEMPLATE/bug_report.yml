@@ -1,0 +1,57 @@
+name: Bug report
+description: Something doesn't work — a CLI hangs, errors silently, or behaves wrong.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! A few quick things that make these much faster to triage:
+
+        - **Try `ACP_TRACE=1`** if the issue is silent/stalling. Re-run the failing command with that env var set and paste the stderr — it shows the JSON-RPC traffic between Claude and the CLI and almost always points at the cause.
+        - **Note your CLI version** for whichever CLI is involved (`<cli> --version` or `<cli> about`).
+        - **Check [README › Known issues](../../#known-issues)** for documented upstream bugs already being tracked.
+
+  - type: dropdown
+    id: cli
+    attributes:
+      label: Which CLI is involved?
+      options:
+        - codex
+        - gemini
+        - cursor
+        - copilot
+        - qwen
+        - other / N/A
+    validations:
+      required: true
+
+  - type: input
+    id: cli-version
+    attributes:
+      label: CLI version
+      placeholder: "e.g. 2026.04.17-787b533"
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you run, what did you expect, what did you get?
+      placeholder: |
+        I ran `/cursor:debug investigate the bug in foo.js`.
+        I expected Cursor to read foo.js and propose a fix.
+        Instead the subagent returned "Cursor debugger failed: no output" after 8 minutes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: trace
+    attributes:
+      label: ACP_TRACE output (if applicable)
+      description: Re-run with `ACP_TRACE=1 node ...multi-cli-companion.mjs ... 2>&1` and paste the stderr.
+      render: shell
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Windows 11 / macOS 14 / Ubuntu 24"

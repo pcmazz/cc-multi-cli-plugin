@@ -1,0 +1,30 @@
+name: Feature request
+description: Add a new CLI, role, or capability to the plugin.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Adding a new CLI is supported out-of-the-box via the `multi-cli-anything` skill — open Claude Code with this plugin installed and ask: *"add `<cli-name>` to cc-multi-cli-plugin."* Claude scaffolds the new plugin, adapter, subagents, and commands. No issue needed for that path.
+
+        Use this template for: a new built-in CLI (shipped by default), a new role for an existing CLI, a behavior/UX improvement, or anything else.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like to add or change?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why? (concrete use case)
+      description: What task can't you do today that this would unblock?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered

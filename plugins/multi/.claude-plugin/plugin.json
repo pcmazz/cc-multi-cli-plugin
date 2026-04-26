@@ -1,11 +1,16 @@
 {
   "name": "multi",
   "description": "Hub plugin for cc-multi-cli-plugin: contains the companion runtime, subagents, setup wizard, and customization skills.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": {
     "name": "greenpolo",
     "url": "https://github.com/greenpolo"
   },
   "license": "Apache-2.0",
-  "keywords": ["claude-code", "multi-cli", "orchestration", "meta"]
+  "keywords": [
+    "claude-code",
+    "multi-cli",
+    "orchestration",
+    "meta"
+  ]
 }

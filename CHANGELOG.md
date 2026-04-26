@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.0.1 — 2026-04-26
+
+Bug-fix release. Real-world prompts beyond a one-shot text reply silently broke before this — agents stalled, errors vanished, the forwarding subagents reported success on empty output. This release fixes the entire ACP traffic path.
+
+### Fixed
+
+- **ACP session hangs across all CLIs.** The shared ACP client now responds to incoming JSON-RPC requests from the agent (previously dropped). `buildAutoApproveRequestHandler` services `session/request_permission`, `cursor/ask_question`, and the full `terminal/*` family — without these, agents stalled forever waiting for our response.
+- **Silently-dropped errors.** Non-codex adapter branches now exit 0 on in-protocol errors (with the failure message in rendered output). Previously, exit 1 tripped the forwarding subagent's "if Bash fails, return nothing" rule and the user saw nothing at all.
+- **Cursor `agent acp` Terminal hang.** Plugin now auto-injects a permissive allowlist (`Shell(*)`, `Read/Write/Edit(**)`, `MCP(*)`) into `~/.cursor/cli-config.json` before each Cursor invocation. Without this, Cursor's out-of-band permission gate silently stalls every `execute` tool call.
+- **Gemini `--model auto` hang.** Companion now treats `auto` as "skip `session/set_model`" so the CLI's native alias resolver picks a real model id. Calling `set_model("auto")` over ACP was silently accepted but caused `session/prompt` to hang.
+- **MCP server schema.** `env` is now an array of `{name, value}` per ACP spec (was a `Record<string, string>`).
+
+### Added
+
+- **MCP wiring (Exa + Context7) into ACP `session/new`** for all four ACP adapters (Gemini, Cursor, Copilot, Qwen). Reads keys from `~/.claude/plugins/cc-multi-cli-plugin/config.json` (already populated by `/multi:setup`).
+- **Client-side ACP terminal services** (`scripts/lib/acp-terminals.mjs`) — `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`, `terminal/release` backed by `child_process.spawn` with a 1 MiB output ring buffer. Handshake declares `clientCapabilities.terminal: true`.
+- **Yolo / max-permission defaults.** Gemini approval mode is now always `yolo`; Codex sandbox for `--write` tasks is `danger-full-access`; Cursor spawn includes `--yolo --approve-mcps acp` and explicitly sets ACP mode based on role.
+- **`ACP_TRACE=1` env var** for full incoming-message tracing — single most useful diagnostic when an agent silently hangs.
+- **One-time stderr warning** when Cursor 2026.04.17-787b533 (the build with the documented MCP/Terminal regression) is detected. Auto-quiet on other versions.
+- **Operator escape hatches**: `CURSOR_AGENT_PATH` env var is now honored for pinning a specific Cursor build. Documented in the `customize` skill.
+
+### Changed
+
+- **All 10 multi/agents/*.md** loosened forwarding contract: capture stderr (`2>&1`), forbid ad-hoc polling/sleep/cat, return a structured one-line failure summary on Bash failure (instead of silently returning nothing). `--write` defaults added to writer-style agents (cursor-debugger, cursor-writer, qwen-writer).
+- **Skills** (`multi-cli-anything`, `customize`) now document the ACP gotchas we hit empirically — out-of-band permission gates, terminal capability semantics, MCP wiring quirks, mode-setting variance, version sensitivity. `cursor.mjs` is cited as the worked example.
+- **README** Known Issues section with documented Cursor 2026.04.17 upstream regressions (forum links).
+
+### Known issues (upstream, not fixable from the plugin)
+
+- Cursor 2026.04.17 `agent acp` does not send `session/request_permission` over the wire and silently stalls Terminal/MCP tool calls. Workaround: pre-approval via `cli-config.json` allowlist (auto-applied) keeps simple shell exec working; complex multi-tool runs may still hang. Pin an older build via `CURSOR_AGENT_PATH` if needed.
+
 ## v2.0.0 — 2026-04-24
 
 ### Breaking — renamed from `skill-gemini` to `cc-multi-cli-plugin`

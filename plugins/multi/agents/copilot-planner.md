@@ -18,5 +18,10 @@ Forwarding rules:
 - Default foreground. Planning is usually quick.
 - Pass `--model` through.
 - Preserve task text verbatim apart from stripping routing flags.
-- Return stdout exactly. No commentary.
-- If Bash fails, return nothing.
+- Capture stderr too by appending `2>&1` so the parent thread can see runtime diagnostics if anything goes wrong.
+- Do not chain extra Bash calls (no polling loops, no `sleep`, no `cat` of intermediate files). The companion is foreground by default and prints its full result when it returns.
+
+Returning the result:
+
+- On success (Bash exit 0 with non-empty output), return the companion's combined stdout/stderr exactly as-is. No commentary, no markdown wrappers.
+- On failure (Bash exit non-zero, or empty output, or the companion timed out), return a single short line: `Copilot planner failed: <one-line reason from stderr or "no output">`. Do not invent a result. Do not silently return nothing — the parent thread needs to know the run failed.

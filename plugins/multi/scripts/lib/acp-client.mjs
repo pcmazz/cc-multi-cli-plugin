@@ -18,6 +18,7 @@ import readline from "node:readline";
 import { parseBrokerEndpoint } from "./broker-endpoint.mjs";
 import { ensureBrokerSession, loadBrokerSession } from "./gemini-broker-lifecycle.mjs";
 import { terminateProcessTree } from "./process.mjs";
+import { TerminalRegistry } from "./acp-terminals.mjs";
 import { attachStderrDiagnosticCollector, BROKER_DIAGNOSTIC_METHOD, sanitizeDiagnosticMessage } from "./acp-diagnostics.mjs";
 
 const PLUGIN_MANIFEST_URL = new URL("../../.claude-plugin/plugin.json", import.meta.url);
@@ -45,6 +46,76 @@ export const ACP_MAX_LINE_BUFFER = 1 << 20;
  * @returns {void}
  */
 
+/**
+ * Build an `onRequest` handler that auto-approves agent permission requests
+ * AND services client-side ACP methods (terminal/*) that the agent expects us
+ * to provide.
+ *
+ * Without this, ACP agents that ask for permission to call tools (web search,
+ * MCP, edits, etc.) hang forever waiting for our response. Cursor's `/debug`
+ * mode additionally relies on `terminal/*` to run shell commands.
+ *
+ * Handles:
+ *   - `session/request_permission` (Gemini, Cursor, Copilot, Qwen)
+ *   - `cursor/ask_question` (Cursor's multiple-choice flavor — auto-pick first)
+ *   - `terminal/create`, `terminal/output`, `terminal/wait_for_exit`,
+ *     `terminal/kill`, `terminal/release` (ACP terminal services)
+ *
+ * For any other unhandled method we log to stderr and return `{}` instead of
+ * throwing `-32601 Method not supported`. Some ACP agents (notably Cursor)
+ * silently retry forever when they receive `-32601`, causing session hangs.
+ *
+ * Each call returns a fresh handler with its own TerminalRegistry, so multiple
+ * parallel ACP sessions don't share terminal state.
+ *
+ * @returns {(method: string, params: any) => any}
+ */
+export function buildAutoApproveRequestHandler() {
+  const terminals = new TerminalRegistry();
+
+  return async (method, params) => {
+    if (method === "session/request_permission") {
+      const options = Array.isArray(params?.options) ? params.options : [];
+      const pick =
+        options.find((o) => /allow.?always/i.test(String(o?.optionId ?? ""))) ??
+        options.find((o) => /allow.?once/i.test(String(o?.optionId ?? ""))) ??
+        options.find((o) => /^(allow|approve|grant)/i.test(String(o?.optionId ?? ""))) ??
+        options[0];
+      const optionId = pick?.optionId ?? "allow_always";
+      return { outcome: { outcome: "selected", optionId } };
+    }
+
+    if (method === "cursor/ask_question") {
+      const questions = Array.isArray(params?.questions) ? params.questions : [];
+      const answers = questions.map((q) => ({
+        questionId: q?.id,
+        optionId: q?.options?.[0]?.id ?? q?.options?.[0]?.optionId ?? null
+      }));
+      return { outcome: { outcome: "answered", answers } };
+    }
+
+    if (method === "terminal/create") return terminals.create(params);
+    if (method === "terminal/output") return terminals.output(params);
+    if (method === "terminal/wait_for_exit") return terminals.waitForExit(params);
+    if (method === "terminal/kill") return terminals.kill(params);
+    if (method === "terminal/release") return terminals.release(params);
+
+    if (process.env.ACP_TRACE) {
+      try {
+        process.stderr.write(
+          `[acp-client] unhandled incoming method: ${method} params=${JSON.stringify(params ?? {}).slice(0, 200)}\n`
+        );
+      } catch {
+        // Best-effort.
+      }
+    }
+    // Return an empty result rather than throwing -32601. Cursor in particular
+    // treats method-not-found as a transient error and silently retries the
+    // same request forever, which manifests as a session hang with no output.
+    return {};
+  };
+}
+
 // ─── Base Client ──────────────────────────────────────────────────────────────
 
 class AcpClientBase {
@@ -60,6 +131,14 @@ class AcpClientBase {
     /** @type {NotificationHandler | null} */
     this.onNotification = options.onNotification ?? null;
     this.onDiagnostic = typeof options.onDiagnostic === "function" ? options.onDiagnostic : null;
+    /**
+     * Handler for INCOMING JSON-RPC requests sent BY the agent (e.g.,
+     * `session/request_permission`). Without this, the agent stalls forever
+     * waiting for our response. Signature: (method, params) => result | Promise<result>.
+     * Throw to send a JSON-RPC error back.
+     * @type {((method: string, params: any) => any) | null}
+     */
+    this.onRequest = typeof options.onRequest === "function" ? options.onRequest : null;
 
     this.lineBuffer = "";
     this.exitPromise = new Promise((resolve) => {
@@ -86,17 +165,48 @@ class AcpClientBase {
       return;
     }
 
-    // Response (has id).
-    if ("id" in message && message.id !== null) {
-      const pending = this.pending.get(message.id);
-      if (pending) {
-        this.pending.delete(message.id);
-        if (message.error) {
-          pending.reject(message.error);
-        } else {
-          pending.resolve(message.result);
+    if (process.env.ACP_TRACE) {
+      try {
+        const kind = "id" in message && message.id !== null
+          ? (message.method ? "REQ" : "RES")
+          : "NOTIF";
+        let summary = message.method ?? (message.error ? `error:${message.error?.code}` : "result");
+        if (message.method === "session/update") {
+          const update = message.params?.update;
+          summary = `session/update[${update?.sessionUpdate ?? "?"}]`;
+          if (update?.sessionUpdate === "tool_call" || update?.sessionUpdate === "tool_call_update") {
+            summary += ` payload=${JSON.stringify(update).slice(0, 350)}`;
+          }
         }
+        process.stderr.write(`[acp-trace] <- ${kind} ${summary}\n`);
+      } catch {
+        // Best-effort.
       }
+    }
+
+    // Message with an id. Could be a response to one of OUR requests, or an
+    // INCOMING REQUEST from the agent (JSON-RPC requests have both id and
+    // method; responses have id without method).
+    if ("id" in message && message.id !== null) {
+      // Response to one of our outgoing requests.
+      if (!message.method) {
+        const pending = this.pending.get(message.id);
+        if (pending) {
+          this.pending.delete(message.id);
+          if (message.error) {
+            pending.reject(message.error);
+          } else {
+            pending.resolve(message.result);
+          }
+        }
+        return;
+      }
+
+      // Incoming request from the agent (e.g. session/request_permission).
+      // Without a reply the agent stalls — dispatch to onRequest if registered,
+      // otherwise return a method-not-found error so the agent fails fast
+      // instead of hanging.
+      this.handleIncomingRequest(message);
       return;
     }
 
@@ -128,6 +238,44 @@ class AcpClientBase {
 
     if (message.method && this.onNotification) {
       this.onNotification(message);
+    }
+  }
+
+  /**
+   * Dispatch an incoming JSON-RPC request from the peer (agent) and reply.
+   *
+   * @param {{ id: number | string, method: string, params?: any }} message
+   */
+  async handleIncomingRequest(message) {
+    const respond = (response) => {
+      try {
+        this.sendMessage({ jsonrpc: "2.0", id: message.id, ...response });
+      } catch {
+        // If we can't reply, the agent will hang — but there's nothing more we can do.
+      }
+    };
+
+    if (!this.onRequest) {
+      respond({
+        error: {
+          code: -32601,
+          message: `Method not supported: ${message.method}`
+        }
+      });
+      return;
+    }
+
+    try {
+      const result = await this.onRequest(message.method, message.params);
+      respond({ result: result ?? {} });
+    } catch (error) {
+      const isObj = error && typeof error === "object";
+      respond({
+        error: {
+          code: isObj && typeof error.code === "number" ? error.code : -32603,
+          message: isObj && typeof error.message === "string" ? error.message : String(error)
+        }
+      });
     }
   }
 
@@ -198,6 +346,14 @@ class AcpClientBase {
   async handshake() {
     const result = await this.request("initialize", {
       protocolVersion: 1,
+      // Declaring `terminal: true` lets agents like Cursor in /debug mode
+      // run shell commands via terminal/* methods (handled by us via spawn).
+      // Without this, Cursor's "Terminal" tool sticks in_progress forever.
+      // Read/write fs ops are NOT delegated to us — agents handle them
+      // internally — so we don't declare fs capabilities.
+      clientCapabilities: {
+        terminal: true
+      },
       clientInfo: {
         name: PLUGIN_MANIFEST.name ?? "gemini-plugin-cc",
         version: PLUGIN_MANIFEST.version ?? "1.0.0"

@@ -13,8 +13,9 @@
 
 import { execSync } from "node:child_process";
 import process from "node:process";
-import { SpawnedAcpClient } from "../acp-client.mjs";
+import { buildAutoApproveRequestHandler, SpawnedAcpClient } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
+import { buildStandardMcpServers } from "../mcp-servers.mjs";
 
 // ─── Binary resolution ────────────────────────────────────────────────────────
 //
@@ -243,17 +244,20 @@ export async function runAcpPromptCopilot(cwd, prompt, options = {}) {
     args: ["--acp", "--stdio"],
     env: options.env ?? process.env,
     onNotification: notificationHandler,
-    onDiagnostic: diagnosticHandler
+    onDiagnostic: diagnosticHandler,
+    onRequest: buildAutoApproveRequestHandler()
   });
+
+  const mcpServers = buildStandardMcpServers();
 
   try {
     await client.initialize();
 
     let sessionId = options.sessionId ?? null;
     if (sessionId) {
-      await client.request("session/load", { sessionId, cwd, mcpServers: [] });
+      await client.request("session/load", { sessionId, cwd, mcpServers });
     } else {
-      const session = await client.request("session/new", { cwd, mcpServers: [] });
+      const session = await client.request("session/new", { cwd, mcpServers });
       sessionId = session?.sessionId ?? null;
     }
 

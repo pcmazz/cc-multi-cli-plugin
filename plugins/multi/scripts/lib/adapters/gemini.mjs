@@ -16,9 +16,10 @@
  */
 
 import process from "node:process";
-import { BROKER_ENDPOINT_ENV, GeminiAcpClient } from "../acp-client.mjs";
+import { BROKER_ENDPOINT_ENV, buildAutoApproveRequestHandler, GeminiAcpClient } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
 import { loadBrokerSession } from "../gemini-broker-lifecycle.mjs";
+import { buildStandardMcpServers } from "../mcp-servers.mjs";
 import { binaryAvailable, runCommand } from "../process.mjs";
 import { resolveThinkingConfig } from "../thinking.mjs";
 
@@ -323,19 +324,22 @@ export async function runAcpPrompt(cwd, prompt, options = {}) {
     disableBroker: true,
     env: options.env,
     onNotification: notificationHandler,
-    onDiagnostic: diagnosticHandler
+    onDiagnostic: diagnosticHandler,
+    onRequest: buildAutoApproveRequestHandler()
   });
+
+  const mcpServers = buildStandardMcpServers();
 
   try {
     let sessionId = options.sessionId ?? null;
     if (sessionId) {
-      await client.request("session/load", { sessionId, cwd, mcpServers: [] });
+      await client.request("session/load", { sessionId, cwd, mcpServers });
       recordObserverEvent(observer, { type: "phase", message: "session_loaded" });
       emitStreamEvent(options.onStream, { type: "phase", message: "session_loaded" });
     } else {
       const session = await client.request("session/new", {
         cwd,
-        mcpServers: []
+        mcpServers
       });
       sessionId = session?.sessionId ?? null;
       recordObserverEvent(observer, { type: "phase", message: "session_created" });

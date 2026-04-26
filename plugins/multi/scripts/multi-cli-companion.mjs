@@ -525,10 +525,21 @@ async function executeTaskRun(request) {
     }
 
     const prompt = request.prompt.trim() || "";
-    const approvalMode = request.write ? "auto_edit" : "plan";
+    // Always use yolo: the agent skips permission prompts internally, our
+    // auto-approve onRequest handler covers anything that still asks, and MCP
+    // servers (Exa, Context7) need tool access to function. Plan mode blocks
+    // tool use entirely and was the cause of multi-topic research hangs.
+    const approvalMode = "yolo";
+    // Treat "auto" as "let the Gemini CLI pick its default model." Calling
+    // session/set_model with "auto" over ACP is silently accepted but causes
+    // the subsequent session/prompt to hang indefinitely, so we omit set_model
+    // entirely in that case.
+    const requestedModel = request.model && String(request.model).toLowerCase() !== "auto"
+      ? request.model
+      : undefined;
 
     const result = await gemini.adapter.invoke(workspaceRoot, prompt, {
-      model: request.model ?? undefined,
+      model: requestedModel,
       approvalMode,
       onStream: request.onProgress
         ? (event) => {
@@ -542,7 +553,11 @@ async function executeTaskRun(request) {
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
     const failureMessage = formatAdapterError(result.error);
-    const exitStatus = result.error ? 1 : 0;
+    // Match codex's pattern: in-protocol errors (e.g. JSON-RPC ModelNotFound)
+    // surface via the rendered failure message, not via a non-zero exit code.
+    // A non-zero exit trips the forwarding subagent's "if Bash fails, return
+    // nothing" rule and silently swallows the error message.
+    const exitStatus = 0;
 
     const rendered = renderTaskResult(
       {
@@ -597,6 +612,7 @@ async function executeTaskRun(request) {
     const result = await cursor.adapter.invoke(workspaceRoot, prompt, {
       model: request.model ?? undefined,
       role: request.role ?? "writer",
+      write: Boolean(request.write),
       onStream: request.onProgress
         ? (event) => {
             // message_chunk events are dropped from the stderr progress stream —
@@ -613,7 +629,8 @@ async function executeTaskRun(request) {
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
     const failureMessage = formatAdapterError(result.error);
-    const exitStatus = result.error ? 1 : 0;
+    // See gemini branch: surface in-protocol errors via rendered output, not exit code.
+    const exitStatus = 0;
 
     const rendered = renderTaskResult(
       {
@@ -668,6 +685,7 @@ async function executeTaskRun(request) {
     const result = await copilot.adapter.invoke(workspaceRoot, prompt, {
       model: request.model ?? undefined,
       role: request.role ?? "default",
+      write: Boolean(request.write),
       onStream: request.onProgress
         ? (event) => {
             // Drop message_chunk events — see cursor branch comment for rationale.
@@ -680,7 +698,8 @@ async function executeTaskRun(request) {
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
     const failureMessage = formatAdapterError(result.error);
-    const exitStatus = result.error ? 1 : 0;
+    // See gemini branch: surface in-protocol errors via rendered output, not exit code.
+    const exitStatus = 0;
 
     const rendered = renderTaskResult(
       {
@@ -735,6 +754,7 @@ async function executeTaskRun(request) {
     const result = await qwen.adapter.invoke(workspaceRoot, prompt, {
       model: request.model ?? undefined,
       role: request.role ?? "writer",
+      write: Boolean(request.write),
       onStream: request.onProgress
         ? (event) => {
             // Drop message_chunk events — see cursor branch comment for rationale.
@@ -747,7 +767,8 @@ async function executeTaskRun(request) {
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
     const failureMessage = formatAdapterError(result.error);
-    const exitStatus = result.error ? 1 : 0;
+    // See gemini branch: surface in-protocol errors via rendered output, not exit code.
+    const exitStatus = 0;
 
     const rendered = renderTaskResult(
       {
@@ -807,7 +828,10 @@ async function executeTaskRun(request) {
     defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "",
     model: request.model,
     effort: request.effort,
-    sandbox: request.write ? "workspace-write" : "read-only",
+    // Max permissions for write tasks: danger-full-access also grants network
+    // access (needed for MCP/web tools). Read-only retains the read-only sandbox
+    // so accidental writes are still blocked even though approvals are skipped.
+    sandbox: request.write ? "danger-full-access" : "read-only",
     onProgress: request.onProgress,
     persistThread: true,
     threadName: resumeThreadId ? null : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)

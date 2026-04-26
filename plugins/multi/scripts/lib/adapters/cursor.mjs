@@ -12,8 +12,9 @@
 
 import { execSync } from "node:child_process";
 import process from "node:process";
-import { SpawnedAcpClient } from "../acp-client.mjs";
+import { buildAutoApproveRequestHandler, SpawnedAcpClient } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
+import { buildStandardMcpServers } from "../mcp-servers.mjs";
 
 // ─── Binary resolution ────────────────────────────────────────────────────────
 //
@@ -234,21 +235,47 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
   const cli = findCursorBinary();
   const client = new SpawnedAcpClient(cwd, {
     command: cli,
-    args: ["acp"],
+    // --yolo (alias for --force): force-allow commands without per-tool prompts.
+    // --approve-mcps: auto-approve MCP server tools.
+    // Without these, tool calls (file edits, shell exec, MCP) hang waiting for
+    // an interactive approval that ACP cannot provide.
+    args: ["--yolo", "--approve-mcps", "acp"],
     env: options.env ?? process.env,
     onNotification: notificationHandler,
-    onDiagnostic: diagnosticHandler
+    onDiagnostic: diagnosticHandler,
+    onRequest: buildAutoApproveRequestHandler()
   });
+
+  const mcpServers = buildStandardMcpServers();
 
   try {
     await client.initialize();
 
     let sessionId = options.sessionId ?? null;
     if (sessionId) {
-      await client.request("session/load", { sessionId, cwd, mcpServers: [] });
+      await client.request("session/load", { sessionId, cwd, mcpServers });
     } else {
-      const session = await client.request("session/new", { cwd, mcpServers: [] });
+      const session = await client.request("session/new", { cwd, mcpServers });
       sessionId = session?.sessionId ?? null;
+    }
+
+    // Explicitly set the ACP mode based on the role. The default mode may be
+    // restricted (no tool execution), which causes tool_call notifications to
+    // stick in "in_progress" forever and the prompt to hang.
+    //   debugger / writer → "agent" (full tool access)
+    //   planner           → "plan"  (Plan mode, read-only design)
+    //   ask               → "ask"   (read-only Q&A)
+    {
+      const role = options.role ?? "writer";
+      const modeId =
+        role === "planner" ? "plan" :
+        role === "ask" ? "ask" :
+        "agent";
+      try {
+        await client.request("session/set_mode", { sessionId, modeId });
+      } catch (error) {
+        process.stderr.write(`Warning: could not set Cursor mode to ${modeId}: ${error?.message ?? error}\n`);
+      }
     }
 
     if (options.model) {

@@ -510,6 +510,10 @@ async function executeTaskRun(request) {
     cli
   });
 
+  // Wrap with CLAUDE.md awareness AFTER metadata is built so the job title
+  // stays a clean excerpt of what the user actually asked for.
+  request.prompt = withClaudeMdPreamble(workspaceRoot, request.prompt);
+
   // ── Gemini dispatch path ────────────────────────────────────────────────────
   // When --cli gemini is used, invoke Gemini ACP instead of the Codex app-server.
   // Gemini does not currently support thread/session resumption in the same way
@@ -976,6 +980,35 @@ function readTaskPrompt(cwd, options, positionals) {
 
   const positionalPrompt = positionals.join(" ");
   return positionalPrompt || readStdinIfPiped();
+}
+
+/**
+ * If the workspace has CLAUDE.md at its root, prepend a short preamble to the
+ * user's prompt instructing the underlying CLI to honor it as house rules.
+ * Lets every adapter (Codex, Cursor, Gemini, Copilot, Qwen, …) inherit project
+ * conventions without each one having to know about CLAUDE.md.
+ *
+ * @param {string} cwd Absolute path to the workspace root.
+ * @param {string} userPrompt The user's original task prompt.
+ * @returns {string} userPrompt unchanged when no CLAUDE.md exists, otherwise
+ *   the preamble + a separator + userPrompt.
+ */
+function withClaudeMdPreamble(cwd, userPrompt) {
+  try {
+    const claudeMdPath = path.join(cwd, "CLAUDE.md");
+    if (!fs.existsSync(claudeMdPath)) return userPrompt;
+    const preamble = [
+      "Before doing anything else, read CLAUDE.md at the repo root and treat its rules as the source of truth for project conventions — they override any default behavior of yours.",
+      "The author may be a non-coder; phrase any output in plain language without code-jargon shorthand.",
+      "Do NOT propose changes that themselves violate CLAUDE.md (e.g., adding comments where the project defaults to no comments, wrapping blocks in try/catch for impossible scenarios, refactoring across more files than CLAUDE.md's per-change limit allows, introducing new libraries).",
+      "",
+      "--- USER REQUEST FOLLOWS ---",
+      ""
+    ].join("\n");
+    return preamble + userPrompt;
+  } catch {
+    return userPrompt;
+  }
 }
 
 function requireTaskRequest(prompt, resumeLast) {

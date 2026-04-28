@@ -1398,7 +1398,14 @@ async function main() {
   const _adapter = getAdapter(cliName); // eslint-disable-line no-unused-vars
 
   // Remove --cli <name> from argv before extracting subcommand.
-  const filteredArgv = rawArgv.filter((_, i) => i !== cliArgIndex && i !== cliArgIndex + 1);
+  // When --cli is absent (cliArgIndex === -1), `cliArgIndex + 1` evaluates to 0
+  // and the naive filter would silently drop argv[0] — the actual subcommand.
+  // That misroute manifests as `Unknown subcommand: --cwd` in the detached
+  // task-worker spawned by enqueueBackgroundTask (which deliberately omits
+  // --cli), killing every background job within milliseconds of being queued.
+  const filteredArgv = cliArgIndex === -1
+    ? rawArgv
+    : rawArgv.filter((_, i) => i !== cliArgIndex && i !== cliArgIndex + 1);
   const [subcommand, ...argv] = filteredArgv;
   if (!subcommand || subcommand === "help" || subcommand === "--help") {
     printUsage();
